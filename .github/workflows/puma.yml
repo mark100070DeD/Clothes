@@ -43,10 +43,9 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python bot.py --once
 
+      # if: always() — ключевая вещь. Запомненные цены это отметки «уже отправлено»,
+      # и если прогон упал на середине рассылки, сохранить их ещё важнее: без этого
+      # через час все отправленные карточки придут повторно.
       - name: Сохранить состояние
-        run: |
-          git config user.name "puma-bot"
-          git config user.email "puma-bot@users.noreply.github.com"
-          git add -f data/puma.db
-          git diff --staged --quiet || git commit -m "state $(date -u '+%Y-%m-%d %H:%M')"
-          git push
+        if: always()
+        run: bash .github/save-state.sh

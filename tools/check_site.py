@@ -3,8 +3,17 @@
 import asyncio
 import logging
 import re
+import sys
 
-from puma import config, messages, scraper
+# Консоль Windows по умолчанию не умеет знак гривны и падает на первой же
+# карточке. Просим её работать в UTF-8, иначе проверка бесполезна.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
+from puma import config, messages, scraper  # noqa: E402
 
 
 def plain(text: str) -> str:

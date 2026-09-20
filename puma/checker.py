@@ -1,4 +1,21 @@
-"""Главная логика: обойти сайт, сравнить с базой, разослать новое."""
+"""Роль: дирижёр. Один проход: обойти сайт, сравнить с базой, разослать новое.
+
+Кто вызывает: app.py в режимах --once и «постоянно».
+Что править здесь: правила отбора — что считать новостью, а что промолчать.
+Про HTML здесь не знают (это scraper.py), про вид сообщений тоже (messages.py).
+
+Правило отбора, по шагам для каждого товара:
+  цена не ниже запомненной      -> молчим
+  самый первый запуск базы      -> запоминаем молча (иначе залп на сотни сообщений)
+  скидка меньше MIN_DISCOUNT    -> запоминаем молча
+  страница не открылась         -> НЕ запоминаем, вернёмся на следующем прогоне
+  нет ни одного размера         -> НЕ запоминаем, иначе скидка потеряется навсегда
+  иначе                         -> шлём карточку и сразу сохраняем базу
+
+Почему «сохраняем сразу»: запомненная цена — это отметка «уже отправлено».
+Если накапливать её до конца прогона, обрыв на середине сотрёт отметки по всем
+уже отправленным карточкам, и через час они придут повторно.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -15,17 +32,30 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("puma")
 checking = asyncio.Lock()  # чтобы два обхода не шли внахлёст
+WARN_EVERY_SEC = 24 * 3600
 
 
-async def warn_broken(bot: Bot, chat_id: int, db) -> None:
-    """Сайт отдал ноль кроссовок — значит, сломался разбор страницы.
-    Молчащий бот выглядит так же, как бот без скидок, поэтому кричим.
-    Не чаще раза в сутки, чтобы не превратить это в спам."""
-    last = float(storage.get_meta(db, "last_warn", "0"))
-    if time.time() - last < 24 * 3600:
+async def warn_once_a_day(bot: Bot, chat_id: int, db, key: str, text: str) -> None:
+    """Тревога в чат не чаще раза в сутки, чтобы поломка не превратилась в спам.
+
+    Молчащий бот выглядит точно так же, как бот без скидок, поэтому про любую
+    поломку надо кричать — сам по вкладке Actions человек не пойдёт.
+    Отметку времени ставим ПОСЛЕ удачной отправки: если написать не удалось,
+    сутки молчания начинать нельзя.
+    """
+    last = float(storage.get_meta(db, key, "0"))
+    if time.time() - last < WARN_EVERY_SEC:
         return
-    storage.set_meta(db, "last_warn", str(time.time()))
-    await bot.send_message(chat_id, messages.BROKEN_TEXT)
+    await bot.send_message(chat_id, text)
+    storage.set_meta(db, key, str(time.time()))
+
+
+async def _try_warn(bot: Bot, chat_id: int, db, key: str, text: str) -> None:
+    """Тревога, которая сама не может свалить прогон."""
+    try:
+        await warn_once_a_day(bot, chat_id, db, key, text)
+    except Exception:
+        log.exception("не смог отправить предупреждение")
 
 
 async def check(bot: Bot, chat_id: int) -> int:
@@ -37,29 +67,61 @@ async def _check(bot: Bot, chat_id: int) -> int:
     db = storage.db_init()
     sent = 0
     async with new_client() as client:
-        items = await fetch_sale(client)
+        try:
+            items = await fetch_sale(client)
+        except Exception as e:
+            # Сайт лёг или закрылся от бота. Молча падать нельзя: человек решит,
+            # что просто нет скидок. Предупреждаем и роняем прогон дальше,
+            # чтобы в Actions осталась красная отметка.
+            log.exception("обход распродажи сорвался")
+            await _try_warn(bot, chat_id, db, "last_warn_down",
+                            messages.DOWN_TEXT.format(error=e))
+            raise
+
         log.info("кроссовок со скидкой: %d", len(items))
         if not items:
-            await warn_broken(bot, chat_id, db)
+            # Сайт ответил, но кроссовок ноль — почти всегда это сменившаяся вёрстка.
+            await _try_warn(bot, chat_id, db, "last_warn", messages.BROKEN_TEXT)
             return 0
+
         first_run = storage.is_empty(db)
         for it in items:
             prev = storage.last_price(db, it.sku)
             if prev is not None and it.price >= prev:
                 continue
-            storage.remember(db, it.sku, it.price)
+
             if first_run or it.discount < config.MIN_DISCOUNT:
+                storage.remember(db, it.sku, it.price)
+                db.commit()
                 continue
-            r = await client.get(it.url)
-            info = parse_product(r.text)
+
+            try:
+                r = await client.get(it.url)
+                r.raise_for_status()
+                info = parse_product(r.text)
+            except Exception as e:
+                log.warning("страница товара %s не открылась (%s) — вернусь позже", it.sku, e)
+                continue
+
             if not info["sizes"]:
-                continue  # нет ни одного размера — слать нечего
+                # Распродан. Цену не запоминаем: иначе когда размеры вернутся,
+                # цена совпадёт с запомненной и карточка не придёт уже никогда.
+                log.info("%s без размеров — вернусь к нему позже", it.sku)
+                continue
+
             reason = ("Новая скидка" if prev is None
                       else f"Цена упала (было {messages.money(prev)})")
-            await send(bot, chat_id, it, info, reason)
+            try:
+                await send(bot, chat_id, it, info, reason)
+            except Exception:
+                log.exception("карточка %s не ушла — вернусь позже", it.sku)
+                continue
+
+            storage.remember(db, it.sku, it.price)
+            db.commit()
             sent += 1
-            await asyncio.sleep(1)
-        db.commit()
+            await asyncio.sleep(config.SEND_PAUSE_SEC)
+
         if first_run:
             await bot.send_message(
                 chat_id,

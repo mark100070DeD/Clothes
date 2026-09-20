@@ -1,8 +1,25 @@
-"""Всё, что ходит на сайт Пумы и разбирает его страницы.
-Если Пума поменяет вёрстку — чинить надо только этот файл."""
+"""Роль: единственный файл, который знает, как устроены страницы Puma.
+
+Кто вызывает: checker.py (полный обход) и sender.py (первая страница для витрины).
+Что править здесь: если Пума поменяла вёрстку и бот перестал видеть товары,
+размеры или цвет — чинить надо ТОЛЬКО этот файл, остальные не знают про HTML.
+
+За что отвечает каждая функция:
+  parse_listing   страница списка -> список Item (отбор: кроссовки + есть скидка)
+  parse_product   страница товара -> размеры в наличии и цвет
+  fetch_sale      обойти оба раздела по страницам (полный проход, раз в час)
+  fetch_first_page  только первая страница каждого раздела (витрина по /start)
+
+Опорные точки вёрстки, которые могут отвалиться:
+  .product-item[data-product-sku]        карточка в списке
+  [data-price-type="finalPrice"|"oldPrice"] + data-price-amount   цены
+  .size-list__item[data-label][data-available]                    размеры
+  <title> вида 'Кросівки X | Колір: Білий | Warm White | Puma'    цвет
+"""
 import asyncio
 import logging
 import re
+from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
@@ -40,7 +57,9 @@ def parse_listing(page_html: str) -> list[Item]:
         link = el.select_one("a.product-item__img-w") or el.select_one("a")
         if not link:
             continue
-        items.append(Item(el["data-product-sku"], name, link["href"], price, old))
+        # Сейчас Пума отдаёт полные адреса, но относительный href нас бы сломал.
+        url = urljoin(config.BASE, link["href"])
+        items.append(Item(el["data-product-sku"], name, url, price, old))
     return items
 
 
@@ -71,7 +90,12 @@ def new_client() -> httpx.AsyncClient:
 
 
 async def fetch_sale(client: httpx.AsyncClient) -> list[Item]:
-    """Обойти оба раздела распродажи по страницам и собрать все кроссовки со скидкой."""
+    """Обойти оба раздела распродажи по страницам и собрать все кроссовки со скидкой.
+
+    Конец списка ищем по всем товарам страницы, а не только по кроссовкам:
+    страница из одних сандалий — не повод считать, что раздел закончился.
+    За последней страницей Пума отдаёт пустую сетку, на ней и останавливаемся.
+    """
     found: dict[str, Item] = {}
     for url in config.SALE_URLS:
         seen_skus: set[str] = set()
