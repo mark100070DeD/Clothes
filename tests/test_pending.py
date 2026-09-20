@@ -2,12 +2,14 @@
 import asyncio
 import os
 import sys
+import tempfile
 import types
 
 os.environ["BOT_TOKEN"] = "123:x"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from puma import sender  # noqa: E402
+from puma import config, sender, storage  # noqa: E402
+from puma.models import Item  # noqa: E402
 
 CHAT = 625622586
 
@@ -61,6 +63,54 @@ def test_all():
     assert answered == [] and bot.calls[1]["offset"] == 41
 
 
+def test_showcase_limit():
+    """Витрина по /start шлёт не больше config.START_ITEMS карточек."""
+    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
+    config.START_ITEMS = 5
+    config.SEND_PAUSE_SEC = 0  # тесту незачем ждать по-настоящему
+
+    page = ('<html><head><title>X | Колір: Білий | White | Puma</title></head><body>'
+            '<li class="size-list__item " data-available="1" data-label="41"></li></body></html>')
+
+    class Resp:
+        text = page
+
+        def raise_for_status(self):
+            return None
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, **kw):
+            return Resp()
+
+    shown = []
+
+    async def fake_first_page(client):
+        # сайт отдал девять товаров — заметно больше лимита
+        return [Item(f"s_{i}", f"Кросівки {i}", f"https://ua.puma.com/{i}.html", 100, 200)
+                for i in range(9)]
+
+    async def fake_send(bot, chat_id, it, info, reason):
+        shown.append(it.sku)
+
+    sender.fetch_first_page = fake_first_page
+    sender.new_client = lambda: Client()
+    sender.send = fake_send
+
+    n = asyncio.run(sender.send_top(FakeBot([]), CHAT))
+    assert n == 5 and len(shown) == 5, (n, shown)
+
+    # показанное запомнено, чтобы часовой обход не прислал это как «новую скидку»
+    db = storage.db_init()
+    assert all(storage.last_price(db, s) == 100 for s in shown), shown
+
+
 if __name__ == "__main__":
     test_all()
+    test_showcase_limit()
     print("pending OK")

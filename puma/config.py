@@ -25,6 +25,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 CHAT_ID = env_int("CHAT_ID", 0)
 INTERVAL_MIN = env_int("INTERVAL_MIN", 60)
 MIN_DISCOUNT = env_int("MIN_DISCOUNT", 0)  # шлём только от N% скидки
+# Сколько карточек показать в витрине по /start. Придёт не больше этого числа,
+# а может и меньше: товары без размеров в наличии витрина пропускает.
+START_ITEMS = env_int("START_ITEMS", 5)
 DB_PATH = os.getenv("DB_PATH") or "data/puma.db"
 CHAT_ID_PATH = "chat_id.txt"
 
