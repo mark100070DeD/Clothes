@@ -10,7 +10,7 @@
 ```
 Telegram  --webhook-->  Cloudflare Worker  --читает-->  data/latest.json
                               |                         (собирает puma.yml раз в час)
-                              +--отвечает--> 5 карточек одним sendMediaGroup
+                              +--отвечает--> 5 карточек, каждая отдельным сообщением
 ```
 
 ## Что внутри
