@@ -7,7 +7,8 @@
 
 Запуск:
     python bot.py          — живёт постоянно, проверяет раз в INTERVAL_MIN минут
-    python bot.py --once   — одна проверка и выход (для GitHub Actions / cron)
+    python bot.py --once   — одна проверка и выход (для GitHub Actions / cron);
+                             заодно разбирает накопившийся /start
 """
 import asyncio
 import html
@@ -274,9 +275,49 @@ async def loop(bot: Bot):
         await asyncio.sleep(INTERVAL_MIN * 60)
 
 
+async def handle_pending(bot: Bot) -> None:
+    """Разобрать сообщения, накопившиеся с прошлого запуска.
+
+    В режиме --once бот не висит на связи, поэтому /start не доходит сам:
+    его надо забрать вручную через getUpdates. Телега держит непрочитанное
+    сутки, так что команда не теряется — просто отвечаем с задержкой.
+    """
+    try:
+        updates = await bot.get_updates(timeout=0, limit=100, allowed_updates=["message"])
+    except Exception:
+        log.exception("не смог забрать сообщения")
+        return
+    if not updates:
+        return
+
+    wants_start = any(
+        u.message and (u.message.text or "").startswith("/start") and u.message.chat.id == CHAT_ID
+        for u in updates
+    )
+    # Подтверждаем приём: иначе те же сообщения вернутся на следующем запуске
+    # и бот пришлёт карточки повторно.
+    last_id = max(u.update_id for u in updates)
+    try:
+        await bot.get_updates(offset=last_id + 1, timeout=0, limit=1)
+    except Exception:
+        log.exception("не смог подтвердить сообщения")
+
+    if not wants_start:
+        return
+    log.info("пришёл /start — шлю 10 карточек")
+    await bot.send_message(
+        CHAT_ID,
+        "Показываю 10 кроссовок с распродажи. Дальше буду присылать новые "
+        "скидки сам, тыкать ничего не надо.")
+    n = await send_top(bot, CHAT_ID, 10)
+    if not n:
+        await bot.send_message(CHAT_ID, "Не смог достать товары с сайта.")
+
+
 async def run_once():
     bot = Bot(BOT_TOKEN)
     try:
+        await handle_pending(bot)
         n = await check(bot, CHAT_ID)
         log.info("отправлено: %d", n)
     finally:
