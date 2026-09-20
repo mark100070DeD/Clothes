@@ -1,1 +1,15 @@
 Скопировано файлов:         1.
+warning: in the working copy of 'deploy2_log.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.github/workflows/start.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'wfcopy.bat', LF will be replaced by CRLF the next time Git touches it
+[main 0c3865f] add fast start workflow
+ 4 files changed, 59 insertions(+)
+ create mode 100644 .github/workflows/start.yml
+ create mode 100644 wfcopy.bat
+ create mode 100644 wfcopy_log.txt
+PUSH
+To https://github.com/mark100070DeD/Clothes.git
+   b7bf6b4..0c3865f  main -> main
+FILES
+.github/workflows/puma.yml
+.github/workflows/start.yml
