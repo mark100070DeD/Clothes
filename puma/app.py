@@ -7,7 +7,8 @@
 Три режима:
   (без флага)  живёт постоянно: слушает /start и проверяет сайт раз в INTERVAL_MIN.
                Для запуска на своём компе — нужен включённый компьютер.
-  --once       обойти сайт и выйти (puma.yml). Чат не читает.
+  --once       обойти сайт, выгрузить data/latest.json и выйти (puma.yml).
+               Чат не читает.
   --answer     только разобрать команды, без обхода сайта (start.yml).
 
 Чат читает ТОЛЬКО --answer. Если бы в getUpdates лез и часовой обход, два
@@ -38,6 +39,8 @@ from aiogram.types import Message
 
 from . import config, messages, storage
 from .checker import check
+from .export import export_latest
+from .scraper import new_client
 from .sender import (answer_start, chat_person, handle_pending,
                      send_with_fallback, show_users)
 
@@ -89,13 +92,20 @@ async def run_once():
     bot = Bot(config.BOT_TOKEN)
     try:
         chat_ids = recipients()
-        if not chat_ids:
+        if chat_ids:
+            log.info("получателей: %d", len(chat_ids))
+            n = await check(bot, chat_ids)
+            log.info("отправлено: %d", n)
+        else:
             log.warning("некому слать: ни CHAT_ID, ни подписчиков. Напиши боту /start.")
-            return
-        log.info("получателей: %d", len(chat_ids))
-        n = await check(bot, chat_ids)
-        log.info("отправлено: %d", n)
     finally:
+        # Выгрузка для Cloudflare Worker нужна даже если рассылка сорвалась:
+        # именно на ней держится мгновенный ответ на /start.
+        try:
+            async with new_client() as client:
+                await export_latest(client)
+        except Exception:
+            log.exception("выгрузка latest.json сорвалась")
         await bot.session.close()
 
 

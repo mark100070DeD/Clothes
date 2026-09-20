@@ -24,6 +24,7 @@ puma/               ВЕСЬ КОД БОТА, по одному файлу на 
   app.py              режимы запуска
 
 data/puma.db        память бота (какие товары уже отправлены)
+data/latest.json    выгрузка витрины: до 20 товаров для мгновенного /start
 tests/              автотесты, чтобы правка не ломала старое
 tools/              служебные питон-скрипты
 scripts/            двойным кликом: запуск, проверки, заливка
@@ -122,6 +123,7 @@ cron-job.org), который раз в минуту дёргает `workflow_di
 | `run-once.bat` | один проход, как на GitHub |
 | `check-site.bat` | проверка без Telegram: доступен ли сайт, что видит парсер |
 | `subscribers.bat` | кто подписан на бота и сколько их |
+| `export-latest.bat` | собрать `data/latest.json` руками, без Telegram |
 | `fill-showcase.bat` | наполнить витрину для `/start`, без Telegram |
 | `run-tests.bat` | прогон автотестов |
 | `publish.bat` | коммит и заливка на GitHub (с `git pull` перед пушем) |

@@ -1,5 +1,6 @@
 """Главная логика: что бот шлёт, а что молча запоминает. Запуск: python -m tests.test_checker"""
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -236,6 +237,50 @@ def test_showcase_filled_by_background_run():
     assert prices == {"a_1": 450}, prices
 
 
+def test_latest_export():
+    """Выгрузка data/latest.json для Cloudflare Worker.
+
+    Проверяем главное: порядок витрины сайта сохранён, распроданные товары
+    отброшены, лимит и потолок запросов соблюдены.
+    """
+    fresh_db()
+    from puma import export
+
+    goods = [item(f"m_{i}", 1000 - i * 10) for i in range(8)]
+
+    async def fake_pages(client, pages):
+        return goods
+
+    calls = {"n": 0}
+
+    def fake_product(page_html):
+        calls["n"] += 1
+        # у каждого третьего товара размеров нет — он в витрину попасть не должен
+        return {"sizes": [] if calls["n"] % 3 == 0 else ["41", "42"],
+                "color": "White (білий)"}
+
+    export.fetch_pages = fake_pages
+    export.parse_product = fake_product
+
+    out = asyncio.run(export.collect_latest(FakeClient(), limit=4, pages=1, max_checks=10))
+    assert len(out) == 4, out
+    assert [o["sku"] for o in out] == ["m_0", "m_1", "m_3", "m_4"], [o["sku"] for o in out]
+
+    # потолок запросов соблюдается, даже если товаров нужно больше
+    calls["n"] = 0
+    out2 = asyncio.run(export.collect_latest(FakeClient(), limit=10, pages=1, max_checks=2))
+    assert len(out2) <= 2, out2
+
+    # файл: обязательные поля и отметка времени
+    path = export.write_latest(out, os.path.join(tempfile.mkdtemp(), "latest.json"))
+    data = json.load(open(path, encoding="utf-8"))
+    assert data["count"] == 4 and len(data["items"]) == 4, data["count"]
+    assert data["updated_at"].endswith("Z"), data["updated_at"]
+    need = {"sku", "name", "url", "price", "old_price", "discount", "image", "color", "sizes"}
+    assert set(data["items"][0]) == need, set(data["items"][0]) ^ need
+    assert data["items"][0]["sizes"] == ["41", "42"], data["items"][0]
+
+
 if __name__ == "__main__":
     test_basics()
     test_broken_site()
@@ -244,4 +289,5 @@ if __name__ == "__main__":
     test_state_survives_failure()
     test_unreadable_product_page_is_retried()
     test_showcase_filled_by_background_run()
+    test_latest_export()
     print("checker OK")

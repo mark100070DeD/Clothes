@@ -34,6 +34,15 @@ ADMIN_ID = env_int("ADMIN_ID", 0)
 USERS_SHOWN = env_int("USERS_SHOWN", 10)
 # Сколько готовых карточек держать в витрине про запас.
 DEALS_KEEP = env_int("DEALS_KEEP", 50)
+# Выгрузка для Cloudflare Worker: он читает этот файл из репозитория
+# и отвечает по нему на /start мгновенно, не трогая ни сайт, ни базу.
+LATEST_PATH = os.getenv("LATEST_PATH") or "data/latest.json"
+LATEST_ITEMS = env_int("LATEST_ITEMS", 20)
+# Сколько первых страниц каждого раздела просмотреть в поисках кандидатов.
+LATEST_PAGES = env_int("LATEST_PAGES", 2)
+# Потолок на число открытых страниц товара. Размеры есть только там, а
+# ходить за ними по всем 450 товарам — это лишние минуты на каждый обход.
+LATEST_MAX_CHECKS = env_int("LATEST_MAX_CHECKS", 45)
 DB_PATH = os.getenv("DB_PATH") or "data/puma.db"
 CHAT_ID_PATH = "chat_id.txt"
 

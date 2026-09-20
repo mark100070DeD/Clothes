@@ -8,7 +8,9 @@
   parse_listing   страница списка -> список Item (отбор: кроссовки + есть скидка)
   parse_product   страница товара -> размеры в наличии и цвет
   fetch_sale      обойти оба раздела по страницам (полный проход, раз в час)
-  fetch_first_page  только первая страница каждого раздела (витрина по /start)
+  fetch_pages     первые страницы разделов в порядке сайта (выгрузка latest.json)
+
+Кто ещё сюда ходит: export.py — за кандидатами для data/latest.json.
 
 Опорные точки вёрстки, которые могут отвалиться:
   .product-item[data-product-sku]        карточка в списке
@@ -114,14 +116,24 @@ async def fetch_sale(client: httpx.AsyncClient) -> list[Item]:
     return list(found.values())
 
 
-async def fetch_first_page(client: httpx.AsyncClient) -> list[Item]:
-    """Первая страница каждого раздела — для витрины по /start."""
+async def fetch_pages(client: httpx.AsyncClient, pages: int = 1) -> list[Item]:
+    """Первые `pages` страниц каждого раздела, в том порядке, как отдаёт сайт.
+
+    Нужна для выгрузки latest.json: там важен именно порядок витрины сайта, а не
+    размер скидки. Полный обход для этого слишком тяжёлый.
+    """
     items: list[Item] = []
     seen: set[str] = set()
     for url in config.SALE_URLS:
-        r = await client.get(url, params={"p": 1})
-        for it in parse_listing(r.text):
-            if it.sku not in seen:
+        for page in range(1, pages + 1):
+            r = await client.get(url, params={"p": page})
+            r.raise_for_status()
+            found = parse_listing(r.text)
+            new = [it for it in found if it.sku not in seen]
+            if not new and page > 1:
+                break  # страницы кончились или пошли повторы
+            for it in new:
                 seen.add(it.sku)
                 items.append(it)
+            await asyncio.sleep(config.PAGE_PAUSE_SEC)
     return items
