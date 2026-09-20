@@ -42,6 +42,10 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          # Откуда забрать тех, кто нажал /start: на команду отвечает Worker,
+          # и новые подписчики появляются у него, а не в базе.
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SUBS_TOKEN: ${{ secrets.SUBS_TOKEN }}
         run: python bot.py --once
 
       # if: always() — ключевая вещь. Запомненные цены это отметки «уже отправлено»,

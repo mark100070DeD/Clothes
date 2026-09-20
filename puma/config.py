@@ -46,6 +46,12 @@ LATEST_MAX_CHECKS = env_int("LATEST_MAX_CHECKS", 45)
 DB_PATH = os.getenv("DB_PATH") or "data/puma.db"
 CHAT_ID_PATH = "chat_id.txt"
 
+# Откуда забирать тех, кто нажал /start. На /start отвечает Worker, и новые
+# подписчики появляются у него, а не в базе: webhook занял канал getUpdates.
+# Адрес Worker'а не секрет, SUBS_TOKEN — секрет, оба приходят из окружения.
+WORKER_URL = (os.getenv("WORKER_URL") or "").rstrip("/")
+SUBS_TOKEN = os.getenv("SUBS_TOKEN", "")
+
 BASE = "https://ua.puma.com"
 # Распродажа, разрезанная по обуви — намного короче, чем общая /uk/skidki.html
 SALE_URLS = [

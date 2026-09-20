@@ -75,3 +75,44 @@ test("пустая витрина — честное сообщение", () => 
 test("битая дата не роняет приветствие", () => {
   assert.ok(greeting(3, "не дата").includes("3 кроссовок"));
 });
+
+/* Витрина: какие товары попадают в ответ на /start. */
+import { pickItems } from "../src/index.js";
+
+const TWENTY = Array.from({ length: 20 }, (_, i) => `item${i}`);
+
+test("берём столько, сколько просили", () => {
+  assert.equal(pickItems(TWENTY, 5, 0).length, 5);
+});
+
+test("сдвиг даёт другую пятёрку", () => {
+  const a = pickItems(TWENTY, 5, 0);
+  const b = pickItems(TWENTY, 5, 5);
+  assert.deepEqual(a, ["item0", "item1", "item2", "item3", "item4"]);
+  assert.deepEqual(b, ["item5", "item6", "item7", "item8", "item9"]);
+});
+
+test("у конца списка заворачиваем по кругу, а не обрезаем", () => {
+  assert.deepEqual(pickItems(TWENTY, 5, 18), [
+    "item18",
+    "item19",
+    "item0",
+    "item1",
+    "item2",
+  ]);
+});
+
+test("сдвиг больше длины списка не ломает выбор", () => {
+  assert.deepEqual(pickItems(TWENTY, 3, 43), pickItems(TWENTY, 3, 3));
+});
+
+test("товаров меньше, чем просили — отдаём все и без повторов", () => {
+  const three = ["a", "b", "c"];
+  const got = pickItems(three, 5, 1);
+  assert.equal(got.length, 3);
+  assert.equal(new Set(got).size, 3);
+});
+
+test("пустая витрина — пустой ответ, без падения", () => {
+  assert.deepEqual(pickItems([], 5, 7), []);
+});

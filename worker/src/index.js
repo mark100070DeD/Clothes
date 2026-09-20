@@ -6,10 +6,15 @@
  * отвечает сразу, потому что ему не нужны ни сайт Пумы, ни база: витрину собрал
  * заранее часовой обход и выложил в data/latest.json.
  *
+ * Подписка открытая: карточки получает любой, кто нажал /start. Его чат Worker
+ * кладёт в KV, а часовой обход забирает список через GET /subs и переносит в
+ * puma.db — иначе новый человек получил бы витрину один раз и больше ничего.
+ *
  * Переменные окружения (задаются в настройках Cloudflare, НЕ в коде):
  *   BOT_TOKEN       токен от @BotFather
- *   CHAT_ID         чей чат обслуживаем; остальные молча игнорируем
  *   WEBHOOK_SECRET  тот же секрет, что передан в setWebhook как secret_token
+ *   SUBS_TOKEN      пароль к GET /subs; его знает только часовой воркфлоу
+ *   CHAT_ID         владелец; на доступ к /start не влияет, нужен для /who
  *   START_ITEMS     сколько карточек показывать, по умолчанию 5
  *
  * Почему отвечаем 200 сразу. Telegram ждёт быстрый ответ и повторяет доставку,
@@ -28,6 +33,13 @@ const REASON = "Сейчас на распродаже";
 
 export default {
   async fetch(request, env, ctx) {
+    const path = new URL(request.url).pathname;
+
+    // Список подписчиков для часового обхода. Под паролем: это чужие chat id.
+    if (path === "/subs") {
+      return subsList(request, env);
+    }
+
     // GET — короткий статус, чтобы можно было проверить деплой в браузере.
     if (request.method !== "POST") {
       return status(env);
@@ -48,21 +60,36 @@ export default {
     }
 
     const message = update?.message;
+    const chat = message?.chat;
     const text = message?.text ?? "";
-    const chatId = message?.chat?.id;
 
-    // Обслуживаем только свой чат. Остальным не отвечаем вообще.
-    if (chatId === undefined || String(chatId) !== String(env.CHAT_ID)) {
+    if (!chat?.id) {
       return new Response("ignored", { status: 200 });
     }
 
     if (text.startsWith("/start")) {
-      ctx.waitUntil(handleStart(env, chatId));
+      ctx.waitUntil(handleStart(env, chat));
     }
 
     return new Response("ok", { status: 200 });
   },
 };
+
+/**
+ * Какие товары показать. Витрина отдаётся в порядке сайта и меняется редко,
+ * поэтому без сдвига человек на каждое нажатие видел бы одну и ту же пятёрку.
+ * Начинаем с произвольного места и заворачиваем по кругу.
+ */
+export function pickItems(items, count, offset) {
+  if (!items.length) return [];
+  const take = Math.min(count, items.length);
+  const start = ((offset % items.length) + items.length) % items.length;
+  const out = [];
+  for (let i = 0; i < take; i++) {
+    out.push(items[(start + i) % items.length]);
+  }
+  return out;
+}
 
 /** Короткий статус для браузера: свежесть выгрузки. Секретов здесь нет. */
 async function status(env) {
@@ -79,7 +106,52 @@ async function status(env) {
   }
 }
 
-async function handleStart(env, chatId) {
+/** Кого обслуживаем. Читает только часовой обход, поэтому под паролем. */
+async function subsList(request, env) {
+  const token = request.headers.get("X-Subs-Token");
+  if (!env.SUBS_TOKEN || token !== env.SUBS_TOKEN) {
+    return new Response("forbidden", { status: 403 });
+  }
+  if (!env.SUBS) {
+    return json({ ok: false, error: "нет хранилища SUBS" }, 500);
+  }
+
+  const subs = [];
+  let cursor;
+  do {
+    const page = await env.SUBS.list({ prefix: "sub:", cursor });
+    for (const key of page.keys) {
+      if (key.metadata) subs.push(key.metadata);
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+
+  return json({ ok: true, count: subs.length, subs });
+}
+
+/**
+ * Запомнить, кому потом слать скидки. Запись сама по себе рассылку не включает:
+ * её включит часовой обход, когда заберёт список себе в базу.
+ */
+async function remember(env, chat) {
+  if (!env.SUBS) return;
+  const record = {
+    chat_id: chat.id,
+    name: [chat.first_name, chat.last_name].filter(Boolean).join(" "),
+    username: chat.username ? `@${chat.username}` : "",
+    ts: Math.floor(Date.now() / 1000),
+  };
+  // Падение записи не должно стоить человеку карточек: он их всё равно увидит,
+  // просто не попадёт в рассылку — это видно в логах и чинится следующим /start.
+  await env.SUBS.put(`sub:${chat.id}`, JSON.stringify(record), {
+    metadata: record,
+  }).catch((e) => console.log(`не записал подписчика ${chat.id}: ${e}`));
+}
+
+async function handleStart(env, chat) {
+  const chatId = chat.id;
+  await remember(env, chat);
+
   let data;
   try {
     data = await loadLatest();
@@ -91,7 +163,12 @@ async function handleStart(env, chatId) {
     throw e;
   }
 
-  const items = (data.items ?? []).slice(0, startItems(env));
+  const all = data.items ?? [];
+  const items = pickItems(
+    all,
+    startItems(env),
+    Math.floor(Math.random() * (all.length || 1)),
+  );
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text: greeting(items.length, data.updated_at),

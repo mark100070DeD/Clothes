@@ -31,3 +31,9 @@ enabled = true
 # Переменных тут нет намеренно: CHAT_ID задан в панели, репозиторий публичный.
 # Поэтому деплоить только так:  npx wrangler deploy --keep-vars
 # Без --keep-vars Wrangler сотрёт CHAT_ID, и бот замолчит.
+
+# Кто нажал /start. Идентификатор хранилища — не секрет: без доступа к аккаунту
+# он бесполезен. Сами chat id отдаются только по GET /subs с паролем SUBS_TOKEN.
+[[kv_namespaces]]
+binding = "SUBS"
+id = "fa878f27cff24296acead4c3807c8e78"

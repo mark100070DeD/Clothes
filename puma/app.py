@@ -28,6 +28,11 @@
 Кому уходят скидки: подписка открытая. Любой, кто нажал /start, попадает в
 таблицу subs и дальше получает карточки сам. Плюс к ним всегда владелец из
 настройки CHAT_ID — его из подписки не выкинуть.
+
+Откуда берутся новые подписчики. На /start отвечает Worker на Cloudflare, и
+человек попадает сначала в его хранилище. Режим --once забирает этот список
+через subs_sync и переносит в базу. Пока webhook включён, getUpdates отдаёт 409,
+поэтому сам Python новых подписчиков не увидит — только через Worker.
 """
 import asyncio
 import logging
@@ -37,7 +42,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from . import config, messages, storage
+from . import config, messages, storage, subs_sync
 from .checker import check
 from .export import export_latest
 from .scraper import new_client
@@ -91,6 +96,14 @@ async def run_once():
     """
     bot = Bot(config.BOT_TOKEN)
     try:
+        # Сначала забрать тех, кто нажал /start у Worker'а: они появляются в его
+        # хранилище, а не в базе. Сбой на этом шаге рассылку не отменяет —
+        # старые подписчики своё получат.
+        try:
+            await subs_sync.pull(storage.db_init())
+        except Exception:
+            log.exception("подписчиков из Worker забрать не вышло")
+
         chat_ids = recipients()
         if chat_ids:
             log.info("получателей: %d", len(chat_ids))
