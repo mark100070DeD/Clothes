@@ -16,8 +16,11 @@
 полагаться только на него нельзя. Чтобы два прогона не вытащили одну и ту же
 команду и не ответили дважды, оба воркфлоу стоят в одной очереди concurrency.
 
-Команды: /start — подписаться и получить витрину; /who — список подписчиков,
-отвечает только владельцу.
+Команды: /start — подписаться и мгновенно получить витрину из базы;
+/who — статистика пользователей, отвечает только админу (ADMIN_ID).
+
+Ни один обработчик не парсит сайт. Сбор карточек — дело фонового обхода: в этом
+режиме его крутит loop() ниже, на GitHub — часовой воркфлоу.
 
 Кому уходят скидки: подписка открытая. Любой, кто нажал /start, попадает в
 таблицу subs и дальше получает карточки сам. Плюс к ним всегда владелец из
@@ -33,7 +36,8 @@ from aiogram.types import Message
 
 from . import config, messages, storage
 from .checker import check
-from .sender import answer_start, chat_name, handle_pending, send_text
+from .sender import (answer_start, chat_person, handle_pending,
+                     send_with_fallback, show_users)
 
 log = logging.getLogger("puma")
 
@@ -106,19 +110,22 @@ async def run_forever():
 
     @dp.message(Command("start"))
     async def start(m: Message):
-        name = chat_name(m.chat)
-        if storage.add_subscriber(db, m.chat.id, name):
-            log.info("новый подписчик: %s (%s)", m.chat.id, name or "имя неизвестно")
+        """Мгновенно: записать пользователя и отдать готовые карточки из базы."""
+        name, username = chat_person(m.chat)
+        if storage.add_subscriber(db, m.chat.id, name, username):
+            log.info("новый подписчик: %s %s %s", m.chat.id, name or "?", username or "")
         await answer_start(bot, m.chat.id)
 
     @dp.message(Command("who"))
     async def who(m: Message):
-        # Список получателей показываем только владельцу.
-        owner = config.load_chat_id()
-        if m.chat.id != owner:
+        """Мгновенно: COUNT и последние пользователи из базы. Только админу."""
+        admin = config.admin_id()
+        user_id = m.from_user.id if m.from_user else m.chat.id
+        if user_id != admin:
+            log.info("/who от %s — доступа нет", user_id)
+            await send_with_fallback(bot, m.chat.id, messages.NO_ACCESS)
             return
-        await send_text(bot, m.chat.id, messages.subs_list(
-            storage.subscribers_full(db), owner))
+        await show_users(bot, m.chat.id, db, admin)
 
     asyncio.create_task(loop(bot))
     await dp.start_polling(bot)

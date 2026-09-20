@@ -2,16 +2,17 @@
 
 Кто вызывает: checker.py (шлёт найденные скидки), app.py (режимы запуска).
 Что править здесь: как именно уходит сообщение, что делать при ошибке Телеграма,
-как отвечать на /start. Тексты лежат не здесь, а в messages.py.
+как отвечать на команды. Тексты лежат не здесь, а в messages.py.
+
+ГЛАВНОЕ ПРАВИЛО ЭТОГО ФАЙЛА: обработчики команд не ходят в сеть за товарами.
+Ни /start, ни /who не парсят сайт — они только читают готовое из базы и отвечают.
+Раньше /start запускал обход сайта прямо в обработчике, и человек ждал полминуты.
+Сбором карточек занят фоновый обход (checker.refresh_deals): он кладёт их в
+таблицу deals целиком, вместе с цветом и размерами.
 
 Получателей может быть несколько: подписка открытая, любой, кто нажал /start,
 попадает в таблицу subs и дальше получает скидки. Одна карточка уходит всем по
 очереди (broadcast), и кто заблокировал бота — из подписки выпадает.
-
-Про флуд-лимит: Телеграм пропускает примерно одно сообщение в секунду на чат,
-а на превышение отвечает ошибкой 429 с просьбой подождать. Мы эту просьбу
-выполняем и повторяем отправку, иначе большая партия скидок обрывалась бы
-на середине.
 """
 from __future__ import annotations
 
@@ -24,7 +25,6 @@ from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
 from . import config, messages, storage
 from .models import Item
-from .scraper import fetch_first_page, new_client, parse_product
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -32,18 +32,16 @@ if TYPE_CHECKING:
 log = logging.getLogger("puma")
 
 
-def chat_name(chat) -> str:
-    """Понятное имя чата: @username, иначе имя с фамилией, иначе название группы.
+def chat_person(chat) -> tuple[str, str]:
+    """(имя, @username) — как показать человека в списке пользователей.
 
     Пишем через getattr: у разных видов чатов набор полей разный, и падать
     из-за отсутствующего поля на приёме команды нельзя.
     """
     username = getattr(chat, "username", None)
-    if username:
-        return "@" + username
     parts = [getattr(chat, "first_name", None), getattr(chat, "last_name", None)]
-    name = " ".join(p for p in parts if p)
-    return name or getattr(chat, "title", None) or ""
+    name = " ".join(p for p in parts if p) or getattr(chat, "title", None) or ""
+    return name, ("@" + username if username else "")
 
 
 async def send_text(bot: Bot, chat_id: int, text: str) -> None:
@@ -54,6 +52,22 @@ async def send_text(bot: Bot, chat_id: int, text: str) -> None:
         log.warning("флуд-лимит на тексте, жду %s с", e.retry_after)
         await asyncio.sleep(e.retry_after + 1)
         await bot.send_message(chat_id, text, parse_mode="HTML")
+
+
+async def send_with_fallback(bot: Bot, chat_id: int, text: str) -> None:
+    """Сообщение, которое дойдёт даже если Телеграм не принял разметку.
+
+    Остаться совсем без ответа хуже, чем получить текст без жирного шрифта.
+    """
+    try:
+        await send_text(bot, chat_id, text)
+        return
+    except Exception:
+        log.exception("сообщение с разметкой не ушло, пробую без неё")
+    try:
+        await bot.send_message(chat_id, re.sub(r"<[^>]+>", "", text))
+    except Exception:
+        log.exception("сообщение не ушло совсем")
 
 
 async def send(bot: Bot, chat_id: int, it: Item, info: dict, reason: str) -> None:
@@ -110,71 +124,65 @@ async def notify(bot: Bot, chat_ids: list[int], text: str) -> int:
     return delivered
 
 
-async def send_top(bot: Bot, chat_id: int, limit: int | None = None) -> int:
-    """Прислать первые скидки так, как их показывает сам сайт на первой странице.
-    Даты у товаров на сайте нет, поэтому «последние» — это его собственный порядок.
+def deal_card(row: tuple) -> tuple[Item, dict]:
+    """Строка таблицы deals -> то, из чего messages.caption рисует карточку."""
+    sku, name, url, price, old_price, color, sizes = row
+    info = {"sizes": [s for s in (sizes or "").split(", ") if s], "color": color or "—"}
+    return Item(sku, name, url, price, old_price), info
 
-    Сколько именно — берём из config.START_ITEMS."""
-    limit = config.START_ITEMS if limit is None else limit
-    db = storage.db_init()
+
+async def send_cards(bot: Bot, chat_id: int, rows: list[tuple], reason: str) -> int:
+    """Отправить готовые карточки. В сеть за товарами не ходим — всё уже в rows."""
     sent = 0
-    async with new_client() as client:
-        for it in await fetch_first_page(client):
-            if sent >= limit:
-                break
-            try:
-                pr = await client.get(it.url)
-                pr.raise_for_status()
-                info = parse_product(pr.text)
-            except Exception as e:  # одна битая страница не должна ломать витрину
-                log.warning("страница товара %s не открылась (%s)", it.sku, e)
-                continue
-            if not info["sizes"]:
-                continue
-            await send(bot, chat_id, it, info, "Сейчас на распродаже")
-            # Витрину помним, чтобы часовой обход не прислал те же товары
-            # ещё раз как «новую скидку». Сохраняем сразу же.
-            storage.remember(db, it.sku, it.price)
-            db.commit()
+    for n, row in enumerate(rows):
+        if n:
+            await asyncio.sleep(config.SEND_PAUSE_SEC)  # лимит Телеграма на чат
+        it, info = deal_card(row)
+        try:
+            await send(bot, chat_id, it, info, reason)
             sent += 1
-            await asyncio.sleep(config.SEND_PAUSE_SEC)
+        except Exception:
+            log.exception("карточка витрины %s не ушла", it.sku)
     return sent
 
 
+async def send_top(bot: Bot, chat_id: int, limit: int | None = None) -> int:
+    """Витрина из готовых карточек. Только чтение базы, ни одного запроса на сайт."""
+    limit = config.START_ITEMS if limit is None else limit
+    db = storage.db_init()
+    return await send_cards(bot, chat_id, storage.recent_deals(db, limit),
+                            "Сейчас на распродаже")
+
+
 async def answer_start(bot: Bot, chat_id: int) -> None:
-    """Ответ на /start: приветствие + витрина из config.START_ITEMS карточек."""
-    await bot.send_message(chat_id, messages.START_TEXT.format(n=config.START_ITEMS))
-    if not await send_top(bot, chat_id):
-        await bot.send_message(chat_id, messages.START_FAILED)
+    """Ответ на /start: приветствие и готовые карточки из базы.
 
-
-async def show_subs(bot: Bot, chat_id: int, db, owner: int) -> None:
-    """Список подписчиков владельцу.
-
-    Если Телеграм не принял разметку — шлём то же самое без неё. Остаться совсем
-    без ответа хуже, чем получить список без жирного шрифта, а раньше любая
-    ошибка тут молча съедалась.
+    Мгновенно: чтение базы занимает миллисекунды, первое сообщение уходит сразу.
+    Если витрина пуста — честно говорим, что бот ещё не собрал скидки.
     """
-    rows = storage.subscribers_full(db)
-    text = messages.subs_list(rows, owner)
-    try:
-        await send_text(bot, chat_id, text)
+    db = storage.db_init()
+    rows = storage.recent_deals(db, config.START_ITEMS)
+    if not rows:
+        await bot.send_message(chat_id, messages.DEALS_EMPTY)
         return
-    except Exception:
-        log.exception("список с разметкой не ушёл, пробую без неё")
-    try:
-        await bot.send_message(chat_id, re.sub(r"<[^>]+>", "", text))
-    except Exception:
-        log.exception("не смог показать список подписчиков")
+    await bot.send_message(chat_id, messages.START_TEXT.format(n=len(rows)))
+    await send_cards(bot, chat_id, rows, "Сейчас на распродаже")
+
+
+async def show_users(bot: Bot, chat_id: int, db, admin: int) -> None:
+    """Статистика пользователей админу: быстрый COUNT и последние подписавшиеся."""
+    text = messages.users_list(storage.subscribers_recent(db, config.USERS_SHOWN),
+                               storage.subscribers_count(db), admin)
+    await send_with_fallback(bot, chat_id, text)
 
 
 async def handle_pending(bot: Bot) -> list[int]:
     """Разобрать сообщения, накопившиеся с прошлого запуска. Отвечает на /start
-    и записывает того, кто его нажал, в подписчики. Возвращает новых подписчиков.
+    и /who, записывает нажавших /start в подписчики. Возвращает новых подписчиков.
 
-    В режиме GitHub Actions бот не висит на связи, поэтому /start не доходит сам:
-    его надо забрать вручную через getUpdates. Телега держит непрочитанное
-    сутки, так что команда не теряется — просто отвечаем с задержкой.
+    В режиме GitHub Actions бот не висит на связи, поэтому команда не доходит
+    сама: её надо забрать через getUpdates. Телега держит непрочитанное сутки,
+    так что команда не теряется — просто отвечаем с задержкой.
     """
     try:
         updates = await bot.get_updates(timeout=0, limit=100, allowed_updates=["message"])
@@ -184,30 +192,35 @@ async def handle_pending(bot: Bot) -> list[int]:
     if not updates:
         return []
 
-    starters: dict[int, str] = {}   # chat id -> имя, порядок сохраняется
-    wants_list: list[int] = []       # кто спросил /who
+    starters: dict[int, tuple[str, str]] = {}   # chat id -> (имя, username)
+    wants_list: list[tuple[int, int]] = []      # (chat id, user id) для /who
     for u in updates:
         if not u.message:
             continue
         text = u.message.text or ""
+        chat = u.message.chat
         if text.startswith("/start"):
-            starters.setdefault(u.message.chat.id, chat_name(u.message.chat))
-        elif text.startswith("/who") and u.message.chat.id not in wants_list:
-            wants_list.append(u.message.chat.id)
+            starters.setdefault(chat.id, chat_person(chat))
+        elif text.startswith("/who"):
+            user = getattr(u.message, "from_user", None)
+            user_id = getattr(user, "id", None) or chat.id
+            if (chat.id, user_id) not in wants_list:
+                wants_list.append((chat.id, user_id))
 
-    owner = config.load_chat_id()
+    admin = config.admin_id()
 
-    # /who отвечаем ДО подтверждения приёма. Список не страшно прислать дважды,
+    # /who отвечаем ДО подтверждения приёма. Ответ не страшно прислать дважды,
     # а вот потерять команду из-за прерванного прогона обидно: подтверждённое
     # обновление Телеграм больше не отдаст.
     if wants_list:
         db = storage.db_init()
-        for chat_id in wants_list:
-            if chat_id != owner:
-                log.info("/who от чужого чата %s — игнорирую", chat_id)
+        for chat_id, user_id in wants_list:
+            if user_id != admin:
+                log.info("/who от %s — доступа нет", user_id)
+                await send_with_fallback(bot, chat_id, messages.NO_ACCESS)
                 continue
-            log.info("/who от владельца %s — шлю список подписчиков", chat_id)
-            await show_subs(bot, chat_id, db, owner)
+            log.info("/who от админа %s — шлю статистику", user_id)
+            await show_users(bot, chat_id, db, admin)
 
     # Подтверждаем приём: иначе те же сообщения вернутся на следующем запуске
     # и бот пришлёт витрину повторно.
@@ -222,12 +235,13 @@ async def handle_pending(bot: Bot) -> list[int]:
 
     db = storage.db_init()
     fresh: list[int] = []
-    for chat_id, name in starters.items():
-        if storage.add_subscriber(db, chat_id, name):
+    for chat_id, person in starters.items():
+        name, username = person
+        if storage.add_subscriber(db, chat_id, name, username):
             fresh.append(chat_id)
-            log.info("новый подписчик: %s (%s)", chat_id, name or "имя неизвестно")
-        log.info("/start от %s — шлю до %d карточек", chat_id, config.START_ITEMS)
-        # Витрина одного человека не должна ломать ответ остальным.
+            log.info("новый подписчик: %s %s %s", chat_id, name or "?", username or "")
+        log.info("/start от %s — шлю витрину из базы", chat_id)
+        # Ответ одному не должен ломать ответ остальным.
         try:
             await answer_start(bot, chat_id)
         except Exception:

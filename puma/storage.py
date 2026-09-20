@@ -3,10 +3,16 @@
 Кто вызывает: checker.py (основной сценарий) и sender.py (витрина по /start).
 Что править здесь: структуру таблиц и запросы к ним.
 
-Три таблицы:
-  seen (sku, price, ts)  последняя цена, по которой товар уже отправлен
-  meta (k, v)            служебные отметки, например время последней тревоги
-  subs (chat_id, ts, name)  кому слать: все, кто нажал /start, и как их звать
+Четыре таблицы:
+  seen (sku, price, ts)     последняя цена, по которой товар уже отправлен
+  meta (k, v)               служебные отметки, например время последней тревоги
+  subs (chat_id, ts, name, username)  кому слать: все, кто нажал /start
+  deals (...)               ГОТОВЫЕ карточки скидок для мгновенной витрины
+
+Зачем нужна deals. Раньше /start парсил сайт прямо в обработчике и человек ждал
+полминуты. Теперь карточки собирает фоновый обход и складывает сюда целиком —
+с названием, ценами, цветом и размерами. Обработчик /start только читает готовое,
+в сеть за ними не ходит и ничего не ждёт.
 
 Про seen и подписчиков: отметка «уже отправлено» общая для всех, не у каждого
 своя. То есть товар уходит один раз всем сразу, а кто подписался позже — прошлые
@@ -33,9 +39,15 @@ def db_init() -> sqlite3.Connection:
     db.execute("CREATE TABLE IF NOT EXISTS seen (sku TEXT PRIMARY KEY, price INTEGER, ts REAL)")
     db.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
     db.execute("CREATE TABLE IF NOT EXISTS subs (chat_id INTEGER PRIMARY KEY, ts REAL)")
-    # Столбец с именем добавлен позже: в уже существующих базах его нет.
-    if "name" not in {r[1] for r in db.execute("PRAGMA table_info(subs)")}:
+    db.execute("""CREATE TABLE IF NOT EXISTS deals (
+        sku TEXT PRIMARY KEY, name TEXT, url TEXT, price INTEGER,
+        old_price INTEGER, color TEXT, sizes TEXT, ts REAL)""")
+    # Эти столбцы добавлены позже: в уже существующих базах их нет.
+    have = {r[1] for r in db.execute("PRAGMA table_info(subs)")}
+    if "name" not in have:
         db.execute("ALTER TABLE subs ADD COLUMN name TEXT")
+    if "username" not in have:
+        db.execute("ALTER TABLE subs ADD COLUMN username TEXT")
     db.commit()
     return db
 
@@ -54,16 +66,19 @@ def remember(db: sqlite3.Connection, sku: str, price: int) -> None:
     db.execute("INSERT OR REPLACE INTO seen VALUES (?,?,?)", (sku, price, time.time()))
 
 
-def add_subscriber(db: sqlite3.Connection, chat_id: int, name: str = "") -> bool:
+def add_subscriber(db: sqlite3.Connection, chat_id: int, name: str = "",
+                   username: str = "") -> bool:
     """Записать подписчика. True — если он новый, а не жал /start раньше.
 
-    Имя при повторном /start обновляем: человек мог сменить @username.
+    Имя и @username при повторном /start обновляем: человек мог их сменить.
     """
-    cur = db.execute("INSERT OR IGNORE INTO subs (chat_id, ts, name) VALUES (?,?,?)",
-                     (chat_id, time.time(), name))
+    cur = db.execute(
+        "INSERT OR IGNORE INTO subs (chat_id, ts, name, username) VALUES (?,?,?,?)",
+        (chat_id, time.time(), name, username))
     fresh = cur.rowcount > 0
-    if not fresh and name:
-        db.execute("UPDATE subs SET name=? WHERE chat_id=?", (name, chat_id))
+    if not fresh and (name or username):
+        db.execute("UPDATE subs SET name=?, username=? WHERE chat_id=?",
+                   (name, username, chat_id))
     db.commit()
     return fresh
 
@@ -79,10 +94,51 @@ def subscribers(db: sqlite3.Connection) -> list[int]:
     return [r[0] for r in db.execute("SELECT chat_id FROM subs ORDER BY ts")]
 
 
-def subscribers_full(db: sqlite3.Connection) -> list[tuple[int, float, str]]:
-    """То же, но с датой подписки и именем — для показа человеку."""
-    return [(r[0], r[1], r[2] or "")
-            for r in db.execute("SELECT chat_id, ts, name FROM subs ORDER BY ts")]
+def subscribers_count(db: sqlite3.Connection) -> int:
+    """Сколько всего подписчиков. Быстрый COUNT, без выборки строк."""
+    return db.execute("SELECT COUNT(*) FROM subs").fetchone()[0]
+
+
+def subscribers_recent(db: sqlite3.Connection, limit: int = 10
+                       ) -> list[tuple[int, float, str, str]]:
+    """Последние подписавшиеся: (user_id, дата входа, имя, username)."""
+    return [(r[0], r[1], r[2] or "", r[3] or "")
+            for r in db.execute(
+                "SELECT chat_id, ts, name, username FROM subs ORDER BY ts DESC LIMIT ?",
+                (limit,))]
+
+
+def save_deal(db: sqlite3.Connection, sku: str, name: str, url: str, price: int,
+              old_price: int, color: str, sizes: str) -> None:
+    """Сложить готовую карточку в витрину. Вызывает только фоновый обход."""
+    db.execute("INSERT OR REPLACE INTO deals VALUES (?,?,?,?,?,?,?,?)",
+               (sku, name, url, price, old_price, color, sizes, time.time()))
+
+
+def recent_deals(db: sqlite3.Connection, limit: int) -> list[tuple]:
+    """Последние карточки: (sku, name, url, price, old_price, color, sizes)."""
+    return db.execute(
+        "SELECT sku, name, url, price, old_price, color, sizes FROM deals "
+        "ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
+
+
+def deals_count(db: sqlite3.Connection) -> int:
+    return db.execute("SELECT COUNT(*) FROM deals").fetchone()[0]
+
+
+def deal_prices(db: sqlite3.Connection) -> list[tuple[str, int]]:
+    """Что лежит в витрине: (sku, цена). Нужно, чтобы выбросить устаревшее."""
+    return db.execute("SELECT sku, price FROM deals").fetchall()
+
+
+def delete_deal(db: sqlite3.Connection, sku: str) -> None:
+    db.execute("DELETE FROM deals WHERE sku=?", (sku,))
+
+
+def trim_deals(db: sqlite3.Connection, keep: int) -> None:
+    """Витрина не должна расти без конца — оставляем только свежие карточки."""
+    db.execute("DELETE FROM deals WHERE sku NOT IN "
+               "(SELECT sku FROM deals ORDER BY ts DESC LIMIT ?)", (keep,))
 
 
 def get_meta(db: sqlite3.Connection, key: str, default: str = "") -> str:

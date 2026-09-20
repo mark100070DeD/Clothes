@@ -25,6 +25,8 @@
   «что считать новостью» — правила отбора     puma/checker.py
   адреса разделов, пороги, паузы              puma/config.py
   приходят дубли или наоборот тишина          puma/checker.py + puma/storage.py
+  /start отвечает «скидок пока нет»            puma/checker.py (refresh_deals)
+  кто получает /who                           puma/config.py (ADMIN_ID)
   как часто запускается, где секреты          .github/workflows/
   проверить без Telegram                      scripts/check-site.bat
   посмотреть, кто подписан                    scripts/subscribers.bat

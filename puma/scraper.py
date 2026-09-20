@@ -110,7 +110,7 @@ async def fetch_sale(client: httpx.AsyncClient) -> list[Item]:
                 found.setdefault(it.sku, it)
             log.info("%s p%d: всего кроссовок со скидкой %d",
                      url.rsplit("/", 2)[-2], page, len(found))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(config.PAGE_PAUSE_SEC)
     return list(found.values())
 
 

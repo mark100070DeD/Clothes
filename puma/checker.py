@@ -13,6 +13,10 @@
   карточка не дошла ни до кого  -> НЕ запоминаем, вернёмся на следующем прогоне
   иначе                         -> шлём карточку всем и сразу сохраняем базу
 
+Ещё эта же функция наполняет витрину для /start (refresh_deals). Готовые
+карточки складываются в таблицу deals, чтобы обработчик команды только читал их
+и отвечал мгновенно, а в сеть за товарами ходил этот фоновый обход.
+
 Почему «сохраняем сразу»: запомненная цена — это отметка «уже отправлено».
 Если накапливать её до конца прогона, обрыв на середине сотрёт отметки по всем
 уже отправленным карточкам, и через час они придут повторно.
@@ -25,6 +29,7 @@ import time
 from typing import TYPE_CHECKING
 
 from . import config, messages, storage
+from .models import Item
 from .scraper import fetch_sale, new_client, parse_product
 from .sender import broadcast, notify
 
@@ -57,6 +62,54 @@ async def _try_warn(bot: Bot, chat_ids: list[int], db, key: str, text: str) -> N
         await warn_once_a_day(bot, chat_ids, db, key, text)
     except Exception:
         log.exception("не смог отправить предупреждение")
+
+
+async def refresh_deals(client, db, items: list[Item]) -> None:
+    """Держать витрину для /start наполненной и не устаревшей.
+
+    Витрина — это готовые карточки в таблице deals. Обработчик /start их только
+    читает, поэтому собирать их должен кто-то заранее, и это место здесь.
+
+    Три шага:
+      1. выбрасываем устаревшее — товар ушёл с распродажи или цена изменилась;
+      2. если карточек меньше START_ITEMS, добираем из самых крупных скидок.
+         За размерами и цветом надо идти на страницу товара, поэтому запросов
+         ровно столько, сколько карточек не хватает — обычно ноль;
+      3. обрезаем хвост, чтобы таблица не росла без конца.
+    """
+    current = {it.sku: it for it in items}
+    for sku, price in storage.deal_prices(db):
+        it = current.get(sku)
+        if it is None or it.price != price:
+            storage.delete_deal(db, sku)
+    db.commit()
+
+    need = config.START_ITEMS - storage.deals_count(db)
+    if need > 0:
+        have = {sku for sku, _ in storage.deal_prices(db)}
+        for it in sorted(items, key=lambda x: -x.discount):
+            if need <= 0:
+                break
+            if it.sku in have:
+                continue
+            try:
+                r = await client.get(it.url)
+                r.raise_for_status()
+                info = parse_product(r.text)
+            except Exception as e:
+                log.warning("витрина: страница %s не открылась (%s)", it.sku, e)
+                continue
+            if not info["sizes"]:
+                continue
+            storage.save_deal(db, it.sku, it.name, it.url, it.price, it.old_price,
+                              info["color"], ", ".join(info["sizes"]))
+            db.commit()
+            need -= 1
+            await asyncio.sleep(config.PAGE_PAUSE_SEC)
+
+    storage.trim_deals(db, config.DEALS_KEEP)
+    db.commit()
+    log.info("в витрине карточек: %d", storage.deals_count(db))
 
 
 async def check(bot: Bot, chat_ids: list[int]) -> int:
@@ -118,10 +171,20 @@ async def _check(bot: Bot, chat_ids: list[int]) -> int:
                 log.warning("карточка %s не дошла ни до кого — вернусь позже", it.sku)
                 continue
 
+            # Карточка уже собрана целиком — кладём её и в витрину для /start,
+            # это бесплатно: ни одного лишнего запроса.
+            storage.save_deal(db, it.sku, it.name, it.url, it.price, it.old_price,
+                              info["color"], ", ".join(info["sizes"]))
             storage.remember(db, it.sku, it.price)
             db.commit()
             sent += 1
             await asyncio.sleep(config.SEND_PAUSE_SEC)
+
+        # Витрина для /start: обновляем всегда, даже если рассылать было нечего.
+        try:
+            await refresh_deals(client, db, items)
+        except Exception:
+            log.exception("витрину обновить не удалось")
 
         if first_run:
             await notify(bot, chat_ids, messages.FIRST_RUN_TEXT.format(

@@ -55,6 +55,8 @@ def item(sku, price, old=1000):
 def fresh_db():
     """Своя пустая база на подтест, чтобы подтесты не влияли друг на друга."""
     config.DB_PATH = os.path.join(tempfile.mkdtemp(), "sub", "t.db")
+    config.SEND_PAUSE_SEC = 0   # тесту незачем ждать по-настоящему
+    config.PAGE_PAUSE_SEC = 0
 
 
 def run_check(items, page=PAGE, fail_sku=None, fetch_error=None):
@@ -213,6 +215,27 @@ def test_unreadable_product_page_is_retried():
     assert storage.last_price(db, "q_1") == 900, "цена не должна меняться без отправки"
 
 
+def test_showcase_filled_by_background_run():
+    """Витрину для /start наполняет фоновый обход, а не обработчик команды."""
+    fresh_db()
+
+    # самый первый прогон: рассылки нет, но витрина обязана наполниться
+    n, cards, bot = run_check([item("a_1", 500), item("b_2", 400), item("c_3", 300)])
+    assert n == 0 and cards == []
+    db = storage.db_init()
+    assert storage.deals_count(db) == 3, storage.deals_count(db)
+
+    sku, name, url, price, old_price, color, sizes = storage.recent_deals(db, 1)[0]
+    assert sizes == "41" and color == "White (білий)", (sizes, color)
+    assert name.startswith("Кросівки") and url.startswith("https://"), (name, url)
+
+    # цена изменилась — устаревшая карточка выбрасывается и собирается заново,
+    # а ушедшие с распродажи товары из витрины исчезают
+    run_check([item("a_1", 450)])
+    prices = dict(storage.deal_prices(storage.db_init()))
+    assert prices == {"a_1": 450}, prices
+
+
 if __name__ == "__main__":
     test_basics()
     test_broken_site()
@@ -220,4 +243,5 @@ if __name__ == "__main__":
     test_sold_out_keeps_its_chance()
     test_state_survives_failure()
     test_unreadable_product_page_is_retried()
+    test_showcase_filled_by_background_run()
     print("checker OK")

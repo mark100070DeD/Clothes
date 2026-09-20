@@ -1,4 +1,7 @@
-"""Разбор команд из телеги в режиме GitHub Actions. Запуск: python -m tests.test_pending"""
+"""Команды из телеги: /start и /who. Запуск: python -m tests.test_pending
+
+Главное, что здесь проверяется: обработчики отвечают из базы и НЕ ходят в сеть.
+"""
 import asyncio
 import logging
 import os
@@ -11,21 +14,25 @@ logging.disable(logging.CRITICAL)  # бот кричит в лог об ошиб
 os.environ["BOT_TOKEN"] = "123:x"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from puma import config, sender, storage  # noqa: E402
+from puma import config, messages, sender, storage  # noqa: E402
 from puma.models import Item  # noqa: E402
 
 CHAT = 625622586
+STRANGER = 999
 
 
-def upd(uid, text, chat_id=CHAT, username=None):
+def upd(uid, text, chat_id=CHAT, username=None, user_id=None, first_name=None):
+    """Обновление от телеграма. user_id отличается от chat_id только в группах."""
     chat = types.SimpleNamespace(id=chat_id, username=username,
-                                 first_name=None, last_name=None, title=None)
-    return types.SimpleNamespace(update_id=uid, message=types.SimpleNamespace(text=text, chat=chat))
+                                 first_name=first_name, last_name=None, title=None)
+    msg = types.SimpleNamespace(text=text, chat=chat,
+                                from_user=types.SimpleNamespace(id=user_id or chat_id))
+    return types.SimpleNamespace(update_id=uid, message=msg)
 
 
 class FakeBot:
-    def __init__(self, updates):
-        self.updates = updates
+    def __init__(self, updates=()):
+        self.updates = list(updates)
         self.calls = []
         self.sent = []
 
@@ -37,6 +44,20 @@ class FakeBot:
         self.sent.append((chat_id, text))
 
 
+def fresh_db():
+    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
+    config.CHAT_ID = CHAT       # владелец задан явно, а не через chat_id.txt
+    config.ADMIN_ID = 0         # значит админ = владелец
+    config.SEND_PAUSE_SEC = 0   # тесту незачем ждать по-настоящему
+    config.PAGE_PAUSE_SEC = 0
+    return storage.db_init()
+
+
+def deal(n, price=1000):
+    return (f"s_{n}", f"Кросівки {n}", f"https://ua.puma.com/{n}.html",
+            price, price * 2, "білий", "41, 42")
+
+
 async def run(updates):
     bot = FakeBot(updates)
     answered = []
@@ -44,104 +65,174 @@ async def run(updates):
     async def fake_answer(bot_, chat_id):
         answered.append(chat_id)
 
+    # подмену обязательно возвращаем на место, иначе она течёт в следующие тесты
+    original = sender.answer_start
     sender.answer_start = fake_answer
-    fresh = await sender.handle_pending(bot)
-    return bot, answered, fresh
+    try:
+        result = await sender.handle_pending(bot)
+    finally:
+        sender.answer_start = original
+    return bot, answered, result
 
 
-def test_all():
-    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")  # своя пустая база
-    config.CHAT_ID = CHAT  # владелец задан явно, а не через chat_id.txt
+def test_start_subscribes():
+    fresh_db()
 
     # пусто: ничего не шлём, offset не трогаем
-    bot, answered, fresh = asyncio.run(run([]))
-    assert answered == [] and fresh == [] and len(bot.calls) == 1
+    bot, answered, new = asyncio.run(run([]))
+    assert answered == [] and new == [] and len(bot.calls) == 1
 
     # /start: отвечаем, подтверждаем приём и записываем в подписчики
-    bot, answered, fresh = asyncio.run(run([upd(10, "привет"), upd(11, "/start")]))
-    assert answered == [CHAT] and fresh == [CHAT] and bot.calls[1]["offset"] == 12
+    bot, answered, new = asyncio.run(run([upd(10, "привет"), upd(11, "/start")]))
+    assert answered == [CHAT] and new == [CHAT] and bot.calls[1]["offset"] == 12
 
     # /start@имя_бота тоже считается, но подписчик уже не новый
-    bot, answered, fresh = asyncio.run(run([upd(20, "/start@ClothessSalee_bot")]))
-    assert answered == [CHAT] and fresh == []
+    bot, answered, new = asyncio.run(run([upd(20, "/start@ClothessSalee_bot")]))
+    assert answered == [CHAT] and new == []
 
     # чужой чат: подписка открытая, поэтому его тоже берём
-    bot, answered, fresh = asyncio.run(run([upd(30, "/start", chat_id=999)]))
-    assert answered == [999] and fresh == [999] and bot.calls[1]["offset"] == 31
+    bot, answered, new = asyncio.run(run([upd(30, "/start", chat_id=STRANGER)]))
+    assert answered == [STRANGER] and new == [STRANGER]
 
     # обычный текст: только подтверждение
-    bot, answered, fresh = asyncio.run(run([upd(40, "как дела")]))
-    assert answered == [] and fresh == [] and bot.calls[1]["offset"] == 41
+    bot, answered, new = asyncio.run(run([upd(40, "как дела")]))
+    assert answered == [] and new == [] and bot.calls[1]["offset"] == 41
 
-    # два разных человека в одной пачке — отвечаем каждому по одному разу
-    bot, answered, fresh = asyncio.run(run(
+    # два человека в одной пачке — отвечаем каждому по одному разу
+    bot, answered, new = asyncio.run(run(
         [upd(50, "/start", chat_id=777), upd(51, "/start", chat_id=777), upd(52, "/start")]))
-    assert answered == [777, CHAT] and fresh == [777]
+    assert answered == [777, CHAT] and new == [777]
 
+    # имя и @username запоминаются и обновляются при повторном /start
+    asyncio.run(run([upd(60, "/start", chat_id=555, username="vasya", first_name="Вася")]))
     db = storage.db_init()
-    assert sorted(storage.subscribers(db)) == sorted([CHAT, 999, 777]), storage.subscribers(db)
+    by_id = {c: (n, u) for c, _, n, u in storage.subscribers_recent(db, 99)}
+    assert by_id[555] == ("Вася", "@vasya"), by_id[555]
+    asyncio.run(run([upd(61, "/start", chat_id=555, username="vasya2", first_name="Вася")]))
+    by_id = {c: (n, u) for c, _, n, u in storage.subscribers_recent(db, 99)}
+    assert by_id[555] == ("Вася", "@vasya2"), by_id[555]
 
-    # имя запоминается и обновляется при повторном /start
-    asyncio.run(run([upd(60, "/start", chat_id=555, username="vasya")]))
-    assert dict((c, n) for c, _, n in storage.subscribers_full(db))[555] == "@vasya"
-    asyncio.run(run([upd(61, "/start", chat_id=555, username="vasya_new")]))
-    assert dict((c, n) for c, _, n in storage.subscribers_full(db))[555] == "@vasya_new"
+    assert storage.subscribers_count(db) == 4, storage.subscribers_recent(db, 99)
 
 
-def test_showcase_limit():
-    """Витрина по /start шлёт не больше config.START_ITEMS карточек."""
-    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
-    config.START_ITEMS = 5
-    config.SEND_PAUSE_SEC = 0  # тесту незачем ждать по-настоящему
+def test_who_is_admin_only():
+    """Админ получает статистику, обычный юзер — отказ, и оба мгновенно."""
+    db = fresh_db()
+    storage.add_subscriber(db, 4242, "Иван", "@ivan")
 
-    page = ('<html><head><title>X | Колір: Білий | White | Puma</title></head><body>'
-            '<li class="size-list__item " data-available="1" data-label="41"></li></body></html>')
+    bot, answered, _ = asyncio.run(run([upd(70, "/who")]))
+    assert len(bot.sent) == 1, bot.sent
+    text = bot.sent[0][1]
+    assert "Пользователей в базе: 1" in text and "@ivan" in text and "4242" in text, text
+    assert answered == []  # /who не подписывает и не шлёт витрину
 
-    class Resp:
-        text = page
+    # обычный юзер получает отказ, а не тишину
+    bot, answered, _ = asyncio.run(run([upd(71, "/who", chat_id=STRANGER)]))
+    assert bot.sent == [(STRANGER, messages.NO_ACCESS)], bot.sent
 
-        def raise_for_status(self):
-            return None
+    # проверка идёт по user_id, а не по chat_id: в группе это разные числа
+    bot, answered, _ = asyncio.run(run([upd(72, "/who", chat_id=-100500, user_id=STRANGER)]))
+    assert bot.sent == [(-100500, messages.NO_ACCESS)], bot.sent
 
-    class Client:
-        async def __aenter__(self):
-            return self
+    # ADMIN_ID перебивает владельца
+    config.ADMIN_ID = STRANGER
+    bot, answered, _ = asyncio.run(run([upd(73, "/who", chat_id=STRANGER)]))
+    assert "Пользователей в базе" in bot.sent[0][1], bot.sent
+    bot, answered, _ = asyncio.run(run([upd(74, "/who")]))
+    assert bot.sent == [(CHAT, messages.NO_ACCESS)], bot.sent
+    config.ADMIN_ID = 0
 
-        async def __aexit__(self, *a):
-            return False
 
-        async def get(self, url, **kw):
-            return Resp()
+def test_who_survives_broken_ack():
+    """Ответ уходит ДО подтверждения приёма: иначе прерванный прогон съедал бы
+    команду навсегда."""
+    db = fresh_db()
+    storage.add_subscriber(db, 4242, "Иван", "@ivan")
+
+    class AckBroken(FakeBot):
+        async def get_updates(self, **kw):
+            self.calls.append(kw)
+            if "offset" in kw:
+                raise RuntimeError("телеграм не принял подтверждение")
+            return self.updates
+
+    async def go():
+        bot = AckBroken([upd(80, "/who")])
+        await sender.handle_pending(bot)
+        return bot
+
+    bot = asyncio.run(go())
+    assert len(bot.sent) == 1 and "@ivan" in bot.sent[0][1], bot.sent
+
+
+def test_who_falls_back_to_plain_text():
+    """Если Телеграм не принял разметку, ответ уходит без неё, а не теряется."""
+    db = fresh_db()
+    storage.add_subscriber(db, 4242, "Иван", "@ivan")
+    tries = []
+
+    class PickyBot(FakeBot):
+        async def send_message(self, chat_id, text, **kw):
+            tries.append(kw.get("parse_mode"))
+            if kw.get("parse_mode") == "HTML":
+                raise RuntimeError("can't parse entities")
+            self.sent.append((chat_id, text))
+
+    async def go():
+        bot = PickyBot()
+        await sender.show_users(bot, CHAT, db, CHAT)
+        return bot
+
+    bot = asyncio.run(go())
+    assert tries == ["HTML", None], tries
+    assert len(bot.sent) == 1, bot.sent
+    assert "@ivan" in bot.sent[0][1] and "<" not in bot.sent[0][1], bot.sent[0][1]
+
+
+def test_showcase_reads_db_only():
+    """Витрина берёт готовые карточки из базы и не ходит в сеть."""
+    db = fresh_db()
+    for n in range(9):
+        storage.save_deal(db, *deal(n))
+    db.commit()
 
     shown = []
 
-    async def fake_first_page(client):
-        # сайт отдал девять товаров — заметно больше лимита
-        return [Item(f"s_{i}", f"Кросівки {i}", f"https://ua.puma.com/{i}.html", 100, 200)
-                for i in range(9)]
-
     async def fake_send(bot, chat_id, it, info, reason):
-        shown.append(it.sku)
+        shown.append((it.sku, info["sizes"], info["color"], reason))
 
-    sender.fetch_first_page = fake_first_page
-    sender.new_client = lambda: Client()
     sender.send = fake_send
+    config.START_ITEMS = 5
 
-    n = asyncio.run(sender.send_top(FakeBot([]), CHAT))
+    n = asyncio.run(sender.send_top(FakeBot(), CHAT))
     assert n == 5 and len(shown) == 5, (n, shown)
+    assert shown[0][1] == ["41", "42"] and shown[0][2] == "білий", shown[0]
+    assert shown[0][3] == "Сейчас на распродаже", shown[0]
 
-    # показанное запомнено, чтобы часовой обход не прислал это как «новую скидку»
-    db = storage.db_init()
-    assert all(storage.last_price(db, s) == 100 for s in shown), shown
+    # сеть недоступна в принципе: модуль отправки не знает про парсер
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "puma", "sender.py"), encoding="utf-8").read()
+    assert "scraper" not in src, "sender.py снова тянет парсер — /start станет медленным"
+
+
+def test_start_when_showcase_empty():
+    """Пустая витрина: честное сообщение вместо тишины."""
+    fresh_db()
+
+    async def go():
+        bot = FakeBot()
+        await sender.answer_start(bot, CHAT)
+        return bot
+
+    bot = asyncio.run(go())
+    assert bot.sent == [(CHAT, messages.DEALS_EMPTY)], bot.sent
 
 
 def test_broadcast_to_many():
     """Одна карточка уходит всем; кто заблокировал бота — выпадает из подписки."""
     from aiogram.exceptions import TelegramForbiddenError
 
-    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
-    config.SEND_PAUSE_SEC = 0
-    db = storage.db_init()
+    db = fresh_db()
     for cid in (111, 222, 333):
         storage.add_subscriber(db, cid)
 
@@ -167,80 +258,12 @@ def test_broadcast_to_many():
     assert asyncio.run(sender.broadcast(None, [111, 333], it, {"sizes": ["41"]}, "повод", db)) == 0
 
 
-def test_who_only_for_owner():
-    """/who показывает список подписчиков, и только владельцу."""
-    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
-    config.CHAT_ID = CHAT
-    db = storage.db_init()
-    storage.add_subscriber(db, 4242, "@friend")
-
-    bot, answered, fresh = asyncio.run(run([upd(70, "/who")]))
-    assert len(bot.sent) == 1, bot.sent
-    text = bot.sent[0][1]
-    assert "Подписчиков: 1" in text and "@friend" in text and "4242" in text, text
-    assert answered == [] and fresh == []  # /who не подписывает и не шлёт витрину
-
-    # чужой чат списка не получает
-    bot, answered, fresh = asyncio.run(run([upd(71, "/who", chat_id=999)]))
-    assert bot.sent == [], bot.sent
-
-
-def test_who_survives_broken_ack():
-    """Ответ на /who уходит ДО подтверждения приёма: иначе прерванный прогон
-    съедал бы команду навсегда."""
-    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
-    config.CHAT_ID = CHAT
-    storage.add_subscriber(storage.db_init(), 4242, "@friend")
-
-    class AckBroken(FakeBot):
-        async def get_updates(self, **kw):
-            self.calls.append(kw)
-            if "offset" in kw:
-                raise RuntimeError("телеграм не принял подтверждение")
-            return self.updates
-
-    async def go():
-        bot = AckBroken([upd(80, "/who")])
-        await sender.handle_pending(bot)
-        return bot
-
-    bot = asyncio.run(go())
-    assert len(bot.sent) == 1 and "@friend" in bot.sent[0][1], bot.sent
-
-
-def test_who_falls_back_to_plain_text():
-    """Если Телеграм не принял разметку, список уходит без неё, а не теряется."""
-    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
-    config.CHAT_ID = CHAT
-    db = storage.db_init()
-    storage.add_subscriber(db, 4242, "@friend")
-
-    tries = []
-
-    class PickyBot(FakeBot):
-        async def send_message(self, chat_id, text, **kw):
-            tries.append(kw.get("parse_mode"))
-            if kw.get("parse_mode") == "HTML":
-                raise RuntimeError("can't parse entities")
-            self.sent.append((chat_id, text))
-
-    async def go():
-        bot = PickyBot([])
-        await sender.show_subs(bot, CHAT, db, CHAT)
-        return bot
-
-    bot = asyncio.run(go())
-    assert tries == ["HTML", None], tries
-    assert len(bot.sent) == 1, bot.sent
-    text = bot.sent[0][1]
-    assert "@friend" in text and "<" not in text, text  # разметка вычищена
-
-
 if __name__ == "__main__":
-    test_all()
-    test_showcase_limit()
-    test_broadcast_to_many()
-    test_who_only_for_owner()
+    test_start_subscribes()
+    test_who_is_admin_only()
     test_who_survives_broken_ack()
     test_who_falls_back_to_plain_text()
+    test_showcase_reads_db_only()
+    test_start_when_showcase_empty()
+    test_broadcast_to_many()
     print("pending OK")
