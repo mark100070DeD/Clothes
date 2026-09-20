@@ -153,8 +153,25 @@ async def fetch_sale(client: httpx.AsyncClient) -> list[Item]:
 def db_init() -> sqlite3.Connection:
     db = sqlite3.connect(DB_PATH)
     db.execute("CREATE TABLE IF NOT EXISTS seen (sku TEXT PRIMARY KEY, price INTEGER, ts REAL)")
+    db.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
     db.commit()
     return db
+
+
+async def warn_broken(bot: Bot, chat_id: int, db: sqlite3.Connection) -> None:
+    """Сайт отдал ноль кроссовок — значит, сломался разбор страницы.
+    Молчащий бот выглядит так же, как бот без скидок, поэтому кричим.
+    Не чаще раза в сутки, чтобы не превратить это в спам."""
+    row = db.execute("SELECT v FROM meta WHERE k='last_warn'").fetchone()
+    last = float(row[0]) if row else 0.0
+    if time.time() - last < 24 * 3600:
+        return
+    db.execute("INSERT OR REPLACE INTO meta VALUES ('last_warn', ?)", (str(time.time()),))
+    db.commit()
+    await bot.send_message(
+        chat_id,
+        "Puma отдала 0 кроссовок со скидкой. Обычно это значит, что на сайте "
+        "поменялась вёрстка и бот перестал её понимать — надо чинить разбор.")
 
 
 def money(v: int) -> str:
@@ -223,6 +240,9 @@ async def _check(bot: Bot, chat_id: int) -> int:
     async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
         items = await fetch_sale(client)
         log.info("кроссовок со скидкой: %d", len(items))
+        if not items:
+            await warn_broken(bot, chat_id, db)
+            return 0
         first_run = db.execute("SELECT COUNT(*) FROM seen").fetchone()[0] == 0
         for it in items:
             row = db.execute("SELECT price FROM seen WHERE sku=?", (it.sku,)).fetchone()
@@ -314,6 +334,16 @@ async def handle_pending(bot: Bot) -> None:
         await bot.send_message(CHAT_ID, "Не смог достать товары с сайта.")
 
 
+async def run_answer():
+    """Только ответ на команды, без обхода сайта — дёшево и быстро,
+    поэтому крутится раз в 5 минут отдельным воркфлоу."""
+    bot = Bot(BOT_TOKEN)
+    try:
+        await handle_pending(bot)
+    finally:
+        await bot.session.close()
+
+
 async def run_once():
     bot = Bot(BOT_TOKEN)
     try:
@@ -359,11 +389,11 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if not BOT_TOKEN:
         raise SystemExit("Нет BOT_TOKEN. Вставь токен от @BotFather в файл .env и запусти снова.")
-    if "--once" in sys.argv:
+    if "--once" in sys.argv or "--answer" in sys.argv:
         globals()["CHAT_ID"] = load_chat_id()
         if not CHAT_ID:
-            raise SystemExit("Нет CHAT_ID — режиму --once он обязателен.")
-        asyncio.run(run_once())
+            raise SystemExit("Нет CHAT_ID — этому режиму он обязателен.")
+        asyncio.run(run_answer() if "--answer" in sys.argv else run_once())
     else:
         asyncio.run(run_forever())
 
