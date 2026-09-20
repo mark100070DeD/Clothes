@@ -7,3 +7,24 @@
 311650_11: 1690 -> 2535
 401526_12: 1690 -> 2535
 подменено строк: 8
+IGNORED?
+STATUS
+ M puma.db
+ M wfcopy_log.txt
+?? faketest.bat
+?? faketest.py
+?? faketest_log.txt
+ADD
+warning: in the working copy of 'wfcopy_log.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'faketest.bat', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'faketest.py', LF will be replaced by CRLF the next time Git touches it
+[main 2f6f392] test: fake price drops
+ 5 files changed, 59 insertions(+)
+ create mode 100644 faketest.bat
+ create mode 100644 faketest.py
+ create mode 100644 faketest_log.txt
+PUSH
+To https://github.com/mark100070DeD/Clothes.git
+   0c3865f..2f6f392  main -> main
+LOG
+2f6f392 test: fake price drops

@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "puma.db"
+      - "*_log.txt"
 
 concurrency:
   group: puma-check      # общая очередь с часовым обходом, чтобы не пересекались
