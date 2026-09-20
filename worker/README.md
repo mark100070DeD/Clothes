@@ -39,10 +39,14 @@ Telegram  --webhook-->  Cloudflare Worker  --читает-->  data/latest.json
 
 ```
 cd worker
-node --test            # прогнать тест подписи
-npx wrangler login     # откроет браузер, войдёшь в аккаунт Cloudflare
-npx wrangler deploy    # выложит Worker и напечатает его адрес
+node --test                        # прогнать тест подписи
+npx wrangler login                 # откроет браузер, войдёшь в аккаунт Cloudflare
+npx wrangler deploy --keep-vars    # выложит Worker и напечатает его адрес
 ```
+
+`--keep-vars` обязателен. CHAT_ID задан в панели и в конфиг не вынесен
+(репозиторий публичный) — обычный `deploy` стёр бы его, Worker перестал бы
+узнавать свой чат и молча глотал бы команды.
 
 Затем секреты (каждая команда спросит значение и не покажет его в консоли):
 

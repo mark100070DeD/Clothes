@@ -5,11 +5,29 @@
 # либо кнопкой в панели (Settings -> Variables and Secrets),
 # либо командой: wrangler secret put BOT_TOKEN
 #
-# Деплой: cd worker && npx wrangler deploy
-name = "puma-start"
+# Деплой: cd worker && npx wrangler deploy --keep-vars
+# Имя должно совпадать с тем, что уже создано в панели Cloudflare, иначе деплой
+# заведёт второй Worker, а webhook останется смотреть на первый.
+name = "clothessale"
 main = "src/index.js"
-compatibility_date = "2024-09-01"
+compatibility_date = "2026-09-20"
 
 # Бесплатного тарифа Workers хватает с большим запасом: 100 000 запросов в сутки,
 # а тут несколько нажатий кнопки в день.
 workers_dev = true
+
+# Отдельные адреса на каждую версию нам не нужны: точка входа одна, та, что
+# прописана в setWebhook.
+preview_urls = false
+
+# Логи обязательны. Ошибка внутри ctx.waitUntil до Telegram не доходит: человек
+# видит тишину, а причина остаётся только здесь.
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+
+# Переменных тут нет намеренно: CHAT_ID задан в панели, репозиторий публичный.
+# Поэтому деплоить только так:  npx wrangler deploy --keep-vars
+# Без --keep-vars Wrangler сотрёт CHAT_ID, и бот замолчит.
