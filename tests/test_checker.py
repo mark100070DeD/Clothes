@@ -66,15 +66,16 @@ def run_check(items, page=PAGE, fail_sku=None, fetch_error=None):
             raise fetch_error
         return items
 
-    async def fake_send(bot_, chat_id, it, info, reason):
+    async def fake_broadcast(bot_, chat_ids, it, info, reason, db=None):
         if it.sku == fail_sku:
-            raise RuntimeError("телеграм не принял")
+            return 0  # не дошло ни до кого
         cards.append((it.sku, reason))
+        return len(chat_ids)
 
     checker.fetch_sale = fake_fetch
-    checker.send = fake_send
+    checker.broadcast = fake_broadcast
     checker.new_client = lambda: FakeClient(page)
-    n = asyncio.run(checker.check(bot, 1))
+    n = asyncio.run(checker.check(bot, [1]))
     return n, cards, bot
 
 
@@ -139,7 +140,7 @@ def test_site_unreachable():
 
     crashed = ""
     try:
-        asyncio.run(checker.check(bot, 1))
+        asyncio.run(checker.check(bot, [1]))
     except RuntimeError as e:
         crashed = str(e)
     assert "403" in crashed, "прогон должен упасть, чтобы в Actions осталась красная отметка"
@@ -148,7 +149,7 @@ def test_site_unreachable():
     # второй раз в те же сутки про то же молчим
     quiet = FakeBot()
     try:
-        asyncio.run(checker.check(quiet, 1))
+        asyncio.run(checker.check(quiet, [1]))
     except RuntimeError:
         pass
     assert quiet.messages == [], quiet.messages
@@ -206,7 +207,7 @@ def test_unreadable_product_page_is_retried():
 
     checker.fetch_sale = fake_fetch
     checker.new_client = lambda: Broken()
-    n = asyncio.run(checker.check(bot, 1))
+    n = asyncio.run(checker.check(bot, [1]))
     assert n == 0
     db = storage.db_init()
     assert storage.last_price(db, "q_1") == 900, "цена не должна меняться без отправки"

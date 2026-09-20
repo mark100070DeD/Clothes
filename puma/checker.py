@@ -10,7 +10,8 @@
   скидка меньше MIN_DISCOUNT    -> запоминаем молча
   страница не открылась         -> НЕ запоминаем, вернёмся на следующем прогоне
   нет ни одного размера         -> НЕ запоминаем, иначе скидка потеряется навсегда
-  иначе                         -> шлём карточку и сразу сохраняем базу
+  карточка не дошла ни до кого  -> НЕ запоминаем, вернёмся на следующем прогоне
+  иначе                         -> шлём карточку всем и сразу сохраняем базу
 
 Почему «сохраняем сразу»: запомненная цена — это отметка «уже отправлено».
 Если накапливать её до конца прогона, обрыв на середине сотрёт отметки по всем
@@ -25,7 +26,7 @@ from typing import TYPE_CHECKING
 
 from . import config, messages, storage
 from .scraper import fetch_sale, new_client, parse_product
-from .sender import send
+from .sender import broadcast, notify
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -35,7 +36,7 @@ checking = asyncio.Lock()  # чтобы два обхода не шли внах
 WARN_EVERY_SEC = 24 * 3600
 
 
-async def warn_once_a_day(bot: Bot, chat_id: int, db, key: str, text: str) -> None:
+async def warn_once_a_day(bot: Bot, chat_ids: list[int], db, key: str, text: str) -> None:
     """Тревога в чат не чаще раза в сутки, чтобы поломка не превратилась в спам.
 
     Молчащий бот выглядит точно так же, как бот без скидок, поэтому про любую
@@ -46,24 +47,24 @@ async def warn_once_a_day(bot: Bot, chat_id: int, db, key: str, text: str) -> No
     last = float(storage.get_meta(db, key, "0"))
     if time.time() - last < WARN_EVERY_SEC:
         return
-    await bot.send_message(chat_id, text)
-    storage.set_meta(db, key, str(time.time()))
+    if await notify(bot, chat_ids, text):
+        storage.set_meta(db, key, str(time.time()))
 
 
-async def _try_warn(bot: Bot, chat_id: int, db, key: str, text: str) -> None:
+async def _try_warn(bot: Bot, chat_ids: list[int], db, key: str, text: str) -> None:
     """Тревога, которая сама не может свалить прогон."""
     try:
-        await warn_once_a_day(bot, chat_id, db, key, text)
+        await warn_once_a_day(bot, chat_ids, db, key, text)
     except Exception:
         log.exception("не смог отправить предупреждение")
 
 
-async def check(bot: Bot, chat_id: int) -> int:
+async def check(bot: Bot, chat_ids: list[int]) -> int:
     async with checking:
-        return await _check(bot, chat_id)
+        return await _check(bot, chat_ids)
 
 
-async def _check(bot: Bot, chat_id: int) -> int:
+async def _check(bot: Bot, chat_ids: list[int]) -> int:
     db = storage.db_init()
     sent = 0
     async with new_client() as client:
@@ -74,14 +75,14 @@ async def _check(bot: Bot, chat_id: int) -> int:
             # что просто нет скидок. Предупреждаем и роняем прогон дальше,
             # чтобы в Actions осталась красная отметка.
             log.exception("обход распродажи сорвался")
-            await _try_warn(bot, chat_id, db, "last_warn_down",
+            await _try_warn(bot, chat_ids, db, "last_warn_down",
                             messages.DOWN_TEXT.format(error=e))
             raise
 
         log.info("кроссовок со скидкой: %d", len(items))
         if not items:
             # Сайт ответил, но кроссовок ноль — почти всегда это сменившаяся вёрстка.
-            await _try_warn(bot, chat_id, db, "last_warn", messages.BROKEN_TEXT)
+            await _try_warn(bot, chat_ids, db, "last_warn", messages.BROKEN_TEXT)
             return 0
 
         first_run = storage.is_empty(db)
@@ -111,10 +112,10 @@ async def _check(bot: Bot, chat_id: int) -> int:
 
             reason = ("Новая скидка" if prev is None
                       else f"Цена упала (было {messages.money(prev)})")
-            try:
-                await send(bot, chat_id, it, info, reason)
-            except Exception:
-                log.exception("карточка %s не ушла — вернусь позже", it.sku)
+            # Не дошло ни до кого — не запоминаем, попробуем на следующем прогоне.
+            # Дошло хотя бы до одного — запоминаем, иначе остальные получат дубль.
+            if not await broadcast(bot, chat_ids, it, info, reason, db):
+                log.warning("карточка %s не дошла ни до кого — вернусь позже", it.sku)
                 continue
 
             storage.remember(db, it.sku, it.price)
@@ -123,7 +124,6 @@ async def _check(bot: Bot, chat_id: int) -> int:
             await asyncio.sleep(config.SEND_PAUSE_SEC)
 
         if first_run:
-            await bot.send_message(
-                chat_id,
-                messages.FIRST_RUN_TEXT.format(n=len(items), minutes=config.INTERVAL_MIN))
+            await notify(bot, chat_ids, messages.FIRST_RUN_TEXT.format(
+                n=len(items), minutes=config.INTERVAL_MIN))
     return sent

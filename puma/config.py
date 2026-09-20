@@ -51,8 +51,9 @@ HEADERS = {
 
 
 def load_chat_id() -> int:
-    """chat id из .env, иначе из отдельного файла, который бот пишет сам.
-    В .env бот не пишет никогда — там лежит токен, и рисковать им нельзя."""
+    """chat id владельца: из .env, иначе из отдельного файла chat_id.txt.
+    В .env бот не пишет никогда — там лежит токен, и рисковать им нельзя.
+    Остальные получатели живут в базе, см. storage.subscribers."""
     if CHAT_ID:
         return CHAT_ID
     try:
@@ -61,7 +62,3 @@ def load_chat_id() -> int:
     except (FileNotFoundError, ValueError):
         return 0
 
-
-def save_chat_id(chat_id: int) -> None:
-    with open(CHAT_ID_PATH, "w", encoding="utf-8") as f:
-        f.write(str(chat_id))

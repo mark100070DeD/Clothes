@@ -1,19 +1,20 @@
 """Роль: режимы запуска. Собирает бота, выбирает сценарий, закрывает соединение.
 
 Кто вызывает: bot.py (точка входа), флагом из командной строки.
-Что править здесь: поведение режимов и обработку /start при живом боте.
+Что править здесь: поведение режимов и список получателей.
 Сам обход сайта и отбор скидок — в checker.py.
 
 Три режима:
   (без флага)  живёт постоянно: слушает /start и проверяет сайт раз в INTERVAL_MIN.
                Для запуска на своём компе — нужен включённый компьютер.
-  --once       разобрать накопившиеся команды, обойти сайт, выйти.
-               Это главный режим: его раз в час запускает puma.yml.
-  --answer     только разобрать команды, без обхода сайта. Быстрый, раз в 5 минут
-               (start.yml), потому что /start иначе ждал бы ответа до часа.
+  --once       обойти сайт и выйти. Это главный режим, раз в час (puma.yml).
+               Команды из чата он НЕ разбирает — этим занят --answer.
+  --answer     только разобрать команды, без обхода сайта. Быстрый, раз в минуту
+               (start.yml): ответ на /start занимает ~31 секунду.
 
-Важно: в режимах --once и --answer chat id берётся из настроек (секрет CHAT_ID),
-а не из сообщения. Рассылка скидок НЕ зависит от того, писал ли кто-то /start.
+Кому уходят скидки: подписка открытая. Любой, кто нажал /start, попадает в
+таблицу subs и дальше получает карточки сам. Плюс к ним всегда владелец из
+настройки CHAT_ID — его из подписки не выкинуть.
 """
 import asyncio
 import logging
@@ -23,64 +24,80 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from . import config
+from . import config, storage
 from .checker import check
 from .sender import answer_start, handle_pending
 
 log = logging.getLogger("puma")
 
 
-async def loop(bot: Bot, chat_id: int):
+def recipients() -> list[int]:
+    """Кому слать: владелец из CHAT_ID плюс все, кто нажал /start.
+
+    Владелец идёт первым и присутствует даже если его нет в subs — иначе
+    достаточно было бы одного случайного сбоя, чтобы бот замолчал для хозяина.
+    """
+    db = storage.db_init()
+    out = storage.subscribers(db)
+    owner = config.load_chat_id()
+    if owner and owner not in out:
+        out.insert(0, owner)
+    return out
+
+
+async def loop(bot: Bot):
     while True:
         try:
-            await check(bot, chat_id)
+            chat_ids = recipients()
+            if chat_ids:
+                await check(bot, chat_ids)
+            else:
+                log.warning("некому слать: напиши боту /start")
         except Exception:
             log.exception("проверка сорвалась")
         await asyncio.sleep(config.INTERVAL_MIN * 60)
 
 
-async def run_answer(chat_id: int):
+async def run_answer():
     bot = Bot(config.BOT_TOKEN)
     try:
-        await handle_pending(bot, chat_id)
+        await handle_pending(bot)
     finally:
         await bot.session.close()
 
 
-async def run_once(chat_id: int):
+async def run_once():
+    """Только обход сайта.
+
+    В getUpdates этот режим намеренно не лезет: команды забирает --answer, и
+    делает это раз в минуту. Если бы оба прогона читали чат, они могли бы
+    вытащить один и тот же /start и ответить витриной дважды.
+    """
+    chat_ids = recipients()
+    if not chat_ids:
+        log.warning("некому слать: ни CHAT_ID, ни подписчиков. Напиши боту /start.")
+        return
     bot = Bot(config.BOT_TOKEN)
     try:
-        # Сначала команды, потом обход. Ошибка в витрине по /start не отменяет
-        # проверку скидок — handle_pending гасит её внутри себя.
-        await handle_pending(bot, chat_id)
-        n = await check(bot, chat_id)
+        log.info("получателей: %d", len(chat_ids))
+        n = await check(bot, chat_ids)
         log.info("отправлено: %d", n)
     finally:
         await bot.session.close()
 
 
 async def run_forever():
-    chat_id = config.load_chat_id()
     bot = Bot(config.BOT_TOKEN)
     dp = Dispatcher()
+    db = storage.db_init()
 
     @dp.message(Command("start"))
     async def start(m: Message):
-        nonlocal chat_id
-        if chat_id and m.chat.id != chat_id:
-            return
-        first_time = not chat_id
-        if first_time:
-            chat_id = m.chat.id
-            config.save_chat_id(chat_id)
-        await answer_start(bot, chat_id)
-        if first_time:
-            asyncio.create_task(loop(bot, chat_id))
+        if storage.add_subscriber(db, m.chat.id):
+            log.info("новый подписчик: %s", m.chat.id)
+        await answer_start(bot, m.chat.id)
 
-    if chat_id:
-        asyncio.create_task(loop(bot, chat_id))
-    else:
-        log.warning("CHAT_ID пуст: напиши боту /start, он сам всё настроит")
+    asyncio.create_task(loop(bot))
     await dp.start_polling(bot)
 
 
@@ -89,10 +106,9 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     if not config.BOT_TOKEN:
         raise SystemExit("Нет BOT_TOKEN. Вставь токен от @BotFather в файл .env и запусти снова.")
-    if "--once" in sys.argv or "--answer" in sys.argv:
-        chat_id = config.load_chat_id()
-        if not chat_id:
-            raise SystemExit("Нет CHAT_ID — этому режиму он обязателен.")
-        asyncio.run(run_answer(chat_id) if "--answer" in sys.argv else run_once(chat_id))
+    if "--answer" in sys.argv:
+        asyncio.run(run_answer())
+    elif "--once" in sys.argv:
+        asyncio.run(run_once())
     else:
         asyncio.run(run_forever())
