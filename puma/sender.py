@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
@@ -147,6 +148,26 @@ async def answer_start(bot: Bot, chat_id: int) -> None:
         await bot.send_message(chat_id, messages.START_FAILED)
 
 
+async def show_subs(bot: Bot, chat_id: int, db, owner: int) -> None:
+    """Список подписчиков владельцу.
+
+    Если Телеграм не принял разметку — шлём то же самое без неё. Остаться совсем
+    без ответа хуже, чем получить список без жирного шрифта, а раньше любая
+    ошибка тут молча съедалась.
+    """
+    rows = storage.subscribers_full(db)
+    text = messages.subs_list(rows, owner)
+    try:
+        await send_text(bot, chat_id, text)
+        return
+    except Exception:
+        log.exception("список с разметкой не ушёл, пробую без неё")
+    try:
+        await bot.send_message(chat_id, re.sub(r"<[^>]+>", "", text))
+    except Exception:
+        log.exception("не смог показать список подписчиков")
+
+
 async def handle_pending(bot: Bot) -> list[int]:
     """Разобрать сообщения, накопившиеся с прошлого запуска. Отвечает на /start
     и записывает того, кто его нажал, в подписчики. Возвращает новых подписчиков.
@@ -174,15 +195,29 @@ async def handle_pending(bot: Bot) -> list[int]:
         elif text.startswith("/who") and u.message.chat.id not in wants_list:
             wants_list.append(u.message.chat.id)
 
+    owner = config.load_chat_id()
+
+    # /who отвечаем ДО подтверждения приёма. Список не страшно прислать дважды,
+    # а вот потерять команду из-за прерванного прогона обидно: подтверждённое
+    # обновление Телеграм больше не отдаст.
+    if wants_list:
+        db = storage.db_init()
+        for chat_id in wants_list:
+            if chat_id != owner:
+                log.info("/who от чужого чата %s — игнорирую", chat_id)
+                continue
+            log.info("/who от владельца %s — шлю список подписчиков", chat_id)
+            await show_subs(bot, chat_id, db, owner)
+
     # Подтверждаем приём: иначе те же сообщения вернутся на следующем запуске
-    # и бот пришлёт карточки повторно.
+    # и бот пришлёт витрину повторно.
     last_id = max(u.update_id for u in updates)
     try:
         await bot.get_updates(offset=last_id + 1, timeout=0, limit=1)
     except Exception:
         log.exception("не смог подтвердить сообщения")
 
-    if not starters and not wants_list:
+    if not starters:
         return []
 
     db = storage.db_init()
@@ -197,16 +232,4 @@ async def handle_pending(bot: Bot) -> list[int]:
             await answer_start(bot, chat_id)
         except Exception:
             log.exception("витрина для %s не удалась", chat_id)
-
-    # /who показываем только владельцу: чужим незачем знать, кто ещё подписан.
-    owner = config.load_chat_id()
-    for chat_id in wants_list:
-        if chat_id != owner:
-            log.info("/who от чужого чата %s — игнорирую", chat_id)
-            continue
-        try:
-            await send_text(bot, chat_id, messages.subs_list(
-                storage.subscribers_full(db), owner))
-        except Exception:
-            log.exception("не смог показать список подписчиков")
     return fresh

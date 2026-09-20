@@ -185,9 +185,62 @@ def test_who_only_for_owner():
     assert bot.sent == [], bot.sent
 
 
+def test_who_survives_broken_ack():
+    """Ответ на /who уходит ДО подтверждения приёма: иначе прерванный прогон
+    съедал бы команду навсегда."""
+    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
+    config.CHAT_ID = CHAT
+    storage.add_subscriber(storage.db_init(), 4242, "@friend")
+
+    class AckBroken(FakeBot):
+        async def get_updates(self, **kw):
+            self.calls.append(kw)
+            if "offset" in kw:
+                raise RuntimeError("телеграм не принял подтверждение")
+            return self.updates
+
+    async def go():
+        bot = AckBroken([upd(80, "/who")])
+        await sender.handle_pending(bot)
+        return bot
+
+    bot = asyncio.run(go())
+    assert len(bot.sent) == 1 and "@friend" in bot.sent[0][1], bot.sent
+
+
+def test_who_falls_back_to_plain_text():
+    """Если Телеграм не принял разметку, список уходит без неё, а не теряется."""
+    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
+    config.CHAT_ID = CHAT
+    db = storage.db_init()
+    storage.add_subscriber(db, 4242, "@friend")
+
+    tries = []
+
+    class PickyBot(FakeBot):
+        async def send_message(self, chat_id, text, **kw):
+            tries.append(kw.get("parse_mode"))
+            if kw.get("parse_mode") == "HTML":
+                raise RuntimeError("can't parse entities")
+            self.sent.append((chat_id, text))
+
+    async def go():
+        bot = PickyBot([])
+        await sender.show_subs(bot, CHAT, db, CHAT)
+        return bot
+
+    bot = asyncio.run(go())
+    assert tries == ["HTML", None], tries
+    assert len(bot.sent) == 1, bot.sent
+    text = bot.sent[0][1]
+    assert "@friend" in text and "<" not in text, text  # разметка вычищена
+
+
 if __name__ == "__main__":
     test_all()
     test_showcase_limit()
     test_broadcast_to_many()
     test_who_only_for_owner()
+    test_who_survives_broken_ack()
+    test_who_falls_back_to_plain_text()
     print("pending OK")
