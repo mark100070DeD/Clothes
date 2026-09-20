@@ -1,0 +1,11 @@
+{
+  "name": "puma-start-worker",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker: мгновенный ответ на /start по data/latest.json",
+  "scripts": {
+    "test": "node --test",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  }
+}

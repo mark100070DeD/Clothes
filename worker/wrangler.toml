@@ -1,0 +1,15 @@
+# Настройки Cloudflare Worker.
+#
+# СЕКРЕТОВ ЗДЕСЬ НЕТ И БЫТЬ НЕ ДОЛЖНО: репозиторий публичный.
+# BOT_TOKEN, CHAT_ID и WEBHOOK_SECRET задаются в самом Cloudflare —
+# либо кнопкой в панели (Settings -> Variables and Secrets),
+# либо командой: wrangler secret put BOT_TOKEN
+#
+# Деплой: cd worker && npx wrangler deploy
+name = "puma-start"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+# Бесплатного тарифа Workers хватает с большим запасом: 100 000 запросов в сутки,
+# а тут несколько нажатий кнопки в день.
+workers_dev = true
