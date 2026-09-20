@@ -1,8 +1,8 @@
 """Точка входа. Здесь только запуск — весь код бота лежит в пакете puma/.
 
     python bot.py           — живёт постоянно (слушает /start, проверяет раз в час)
-    python bot.py --once    — обход сайта и выход (GitHub Actions, раз в час)
-    python bot.py --answer  — только ответ на команды (GitHub Actions, раз в минуту)
+    python bot.py --once    — команды + обход сайта и выход (GitHub Actions)
+    python bot.py --answer  — только ответ на команды (GitHub Actions, быстрый)
 
 КАРТА ПРОЕКТА. Один прогон идёт сверху вниз:
 
