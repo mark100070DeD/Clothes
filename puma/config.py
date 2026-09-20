@@ -1,0 +1,53 @@
+"""Все настройки в одном месте: токены, адреса, лимиты."""
+import os
+import re
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def env_int(name: str, default: int) -> int:
+    """Число из .env, терпимое к мусору вокруг значения."""
+    digits = re.match(r"-?\d+", (os.getenv(name) or "").strip())
+    return int(digits.group()) if digits else default
+
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+CHAT_ID = env_int("CHAT_ID", 0)
+INTERVAL_MIN = env_int("INTERVAL_MIN", 60)
+MIN_DISCOUNT = env_int("MIN_DISCOUNT", 0)  # шлём только от N% скидки
+DB_PATH = os.getenv("DB_PATH") or "data/puma.db"
+CHAT_ID_PATH = "chat_id.txt"
+
+BASE = "https://ua.puma.com"
+# Распродажа, разрезанная по обуви — намного короче, чем общая /uk/skidki.html
+SALE_URLS = [
+    BASE + "/uk/skidki/muzhchiny/obuv.html",
+    BASE + "/uk/skidki/zhenschiny/obuv.html",
+]
+IMG = ("https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa"
+       "/global/{model}/{color}/sv01/fnd/UKR/w/1000/h/1000/fmt/png")
+MAX_PAGES = 40
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept-Language": "uk-UA,uk;q=0.9",
+}
+
+
+def load_chat_id() -> int:
+    """chat id из .env, иначе из отдельного файла, который бот пишет сам.
+    В .env бот не пишет никогда — там лежит токен, и рисковать им нельзя."""
+    if CHAT_ID:
+        return CHAT_ID
+    try:
+        with open(CHAT_ID_PATH, encoding="utf-8") as f:
+            return int(f.read().strip() or 0)
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def save_chat_id(chat_id: int) -> None:
+    with open(CHAT_ID_PATH, "w", encoding="utf-8") as f:
+        f.write(str(chat_id))

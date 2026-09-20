@@ -1,7 +1,4 @@
 .env
 chat_id.txt
 __pycache__/
-bot_log.txt
-check_result.txt
-check2_result.txt
-fix_env_result.txt
+logs/

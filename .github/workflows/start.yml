@@ -11,8 +11,13 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - "puma.db"
-      - "*_log.txt"
+      - "data/**"
+      - "logs/**"
+      - "archive/**"
+      - "scripts/**"
+      - "tools/**"
+      - "tests/**"
+      - "README.md"
 
 concurrency:
   group: puma-check      # общая очередь с часовым обходом, чтобы не пересекались
