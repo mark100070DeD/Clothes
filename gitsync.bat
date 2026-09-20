@@ -2,11 +2,9 @@
 title gitsync
 cd /d "%~dp0"
 (
-  echo === status ===
-  git status -sb
-  echo === add/commit ===
+  git rm --cached --ignore-unmatch gitsync_log.txt update_log.txt repo_files.txt
   git add -A
-  git commit -m "start works in actions mode"
+  git commit -m "clean up local logs"
   echo === push ===
   git push
   echo === log ===
