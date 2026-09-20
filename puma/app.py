@@ -12,6 +12,9 @@
   --answer     только разобрать команды, без обхода сайта. Быстрый, раз в минуту
                (start.yml): ответ на /start занимает ~31 секунду.
 
+Команды: /start — подписаться и получить витрину; /who — список подписчиков,
+отвечает только владельцу.
+
 Кому уходят скидки: подписка открытая. Любой, кто нажал /start, попадает в
 таблицу subs и дальше получает карточки сам. Плюс к ним всегда владелец из
 настройки CHAT_ID — его из подписки не выкинуть.
@@ -24,9 +27,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from . import config, storage
+from . import config, messages, storage
 from .checker import check
-from .sender import answer_start, handle_pending
+from .sender import answer_start, chat_name, handle_pending, send_text
 
 log = logging.getLogger("puma")
 
@@ -93,9 +96,19 @@ async def run_forever():
 
     @dp.message(Command("start"))
     async def start(m: Message):
-        if storage.add_subscriber(db, m.chat.id):
-            log.info("новый подписчик: %s", m.chat.id)
+        name = chat_name(m.chat)
+        if storage.add_subscriber(db, m.chat.id, name):
+            log.info("новый подписчик: %s (%s)", m.chat.id, name or "имя неизвестно")
         await answer_start(bot, m.chat.id)
+
+    @dp.message(Command("who"))
+    async def who(m: Message):
+        # Список получателей показываем только владельцу.
+        owner = config.load_chat_id()
+        if m.chat.id != owner:
+            return
+        await send_text(bot, m.chat.id, messages.subs_list(
+            storage.subscribers_full(db), owner))
 
     asyncio.create_task(loop(bot))
     await dp.start_polling(bot)

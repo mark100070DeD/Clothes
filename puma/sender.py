@@ -31,6 +31,20 @@ if TYPE_CHECKING:
 log = logging.getLogger("puma")
 
 
+def chat_name(chat) -> str:
+    """Понятное имя чата: @username, иначе имя с фамилией, иначе название группы.
+
+    Пишем через getattr: у разных видов чатов набор полей разный, и падать
+    из-за отсутствующего поля на приёме команды нельзя.
+    """
+    username = getattr(chat, "username", None)
+    if username:
+        return "@" + username
+    parts = [getattr(chat, "first_name", None), getattr(chat, "last_name", None)]
+    name = " ".join(p for p in parts if p)
+    return name or getattr(chat, "title", None) or ""
+
+
 async def send_text(bot: Bot, chat_id: int, text: str) -> None:
     """Текстом, с одной попыткой переждать флуд-лимит."""
     try:
@@ -149,11 +163,16 @@ async def handle_pending(bot: Bot) -> list[int]:
     if not updates:
         return []
 
-    starters: list[int] = []
+    starters: dict[int, str] = {}   # chat id -> имя, порядок сохраняется
+    wants_list: list[int] = []       # кто спросил /who
     for u in updates:
-        if u.message and (u.message.text or "").startswith("/start"):
-            if u.message.chat.id not in starters:
-                starters.append(u.message.chat.id)
+        if not u.message:
+            continue
+        text = u.message.text or ""
+        if text.startswith("/start"):
+            starters.setdefault(u.message.chat.id, chat_name(u.message.chat))
+        elif text.startswith("/who") and u.message.chat.id not in wants_list:
+            wants_list.append(u.message.chat.id)
 
     # Подтверждаем приём: иначе те же сообщения вернутся на следующем запуске
     # и бот пришлёт карточки повторно.
@@ -163,19 +182,31 @@ async def handle_pending(bot: Bot) -> list[int]:
     except Exception:
         log.exception("не смог подтвердить сообщения")
 
-    if not starters:
+    if not starters and not wants_list:
         return []
 
     db = storage.db_init()
     fresh: list[int] = []
-    for chat_id in starters:
-        if storage.add_subscriber(db, chat_id):
+    for chat_id, name in starters.items():
+        if storage.add_subscriber(db, chat_id, name):
             fresh.append(chat_id)
-            log.info("новый подписчик: %s", chat_id)
+            log.info("новый подписчик: %s (%s)", chat_id, name or "имя неизвестно")
         log.info("/start от %s — шлю до %d карточек", chat_id, config.START_ITEMS)
         # Витрина одного человека не должна ломать ответ остальным.
         try:
             await answer_start(bot, chat_id)
         except Exception:
             log.exception("витрина для %s не удалась", chat_id)
+
+    # /who показываем только владельцу: чужим незачем знать, кто ещё подписан.
+    owner = config.load_chat_id()
+    for chat_id in wants_list:
+        if chat_id != owner:
+            log.info("/who от чужого чата %s — игнорирую", chat_id)
+            continue
+        try:
+            await send_text(bot, chat_id, messages.subs_list(
+                storage.subscribers_full(db), owner))
+        except Exception:
+            log.exception("не смог показать список подписчиков")
     return fresh

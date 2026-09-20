@@ -17,19 +17,24 @@ from puma.models import Item  # noqa: E402
 CHAT = 625622586
 
 
-def upd(uid, text, chat_id=CHAT):
-    msg = types.SimpleNamespace(text=text, chat=types.SimpleNamespace(id=chat_id))
-    return types.SimpleNamespace(update_id=uid, message=msg)
+def upd(uid, text, chat_id=CHAT, username=None):
+    chat = types.SimpleNamespace(id=chat_id, username=username,
+                                 first_name=None, last_name=None, title=None)
+    return types.SimpleNamespace(update_id=uid, message=types.SimpleNamespace(text=text, chat=chat))
 
 
 class FakeBot:
     def __init__(self, updates):
         self.updates = updates
         self.calls = []
+        self.sent = []
 
     async def get_updates(self, **kw):
         self.calls.append(kw)
         return [] if "offset" in kw else self.updates
+
+    async def send_message(self, chat_id, text, **kw):
+        self.sent.append((chat_id, text))
 
 
 async def run(updates):
@@ -46,6 +51,7 @@ async def run(updates):
 
 def test_all():
     config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")  # своя пустая база
+    config.CHAT_ID = CHAT  # владелец задан явно, а не через chat_id.txt
 
     # пусто: ничего не шлём, offset не трогаем
     bot, answered, fresh = asyncio.run(run([]))
@@ -74,6 +80,12 @@ def test_all():
 
     db = storage.db_init()
     assert sorted(storage.subscribers(db)) == sorted([CHAT, 999, 777]), storage.subscribers(db)
+
+    # имя запоминается и обновляется при повторном /start
+    asyncio.run(run([upd(60, "/start", chat_id=555, username="vasya")]))
+    assert dict((c, n) for c, _, n in storage.subscribers_full(db))[555] == "@vasya"
+    asyncio.run(run([upd(61, "/start", chat_id=555, username="vasya_new")]))
+    assert dict((c, n) for c, _, n in storage.subscribers_full(db))[555] == "@vasya_new"
 
 
 def test_showcase_limit():
@@ -155,8 +167,27 @@ def test_broadcast_to_many():
     assert asyncio.run(sender.broadcast(None, [111, 333], it, {"sizes": ["41"]}, "повод", db)) == 0
 
 
+def test_who_only_for_owner():
+    """/who показывает список подписчиков, и только владельцу."""
+    config.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
+    config.CHAT_ID = CHAT
+    db = storage.db_init()
+    storage.add_subscriber(db, 4242, "@friend")
+
+    bot, answered, fresh = asyncio.run(run([upd(70, "/who")]))
+    assert len(bot.sent) == 1, bot.sent
+    text = bot.sent[0][1]
+    assert "Подписчиков: 1" in text and "@friend" in text and "4242" in text, text
+    assert answered == [] and fresh == []  # /who не подписывает и не шлёт витрину
+
+    # чужой чат списка не получает
+    bot, answered, fresh = asyncio.run(run([upd(71, "/who", chat_id=999)]))
+    assert bot.sent == [], bot.sent
+
+
 if __name__ == "__main__":
     test_all()
     test_showcase_limit()
     test_broadcast_to_many()
+    test_who_only_for_owner()
     print("pending OK")

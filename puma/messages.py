@@ -8,6 +8,7 @@
 и цвета приходят с сайта, поэтому прогоняются через html.escape.
 """
 import html
+import time
 
 from .models import Item
 
@@ -26,6 +27,25 @@ def caption(it: Item, info: dict, reason: str) -> str:
         f"Размеры: {sizes}\n"
         f'<a href="{it.url}">Открыть на puma.com</a>'
     )
+
+
+def subs_list(rows: list[tuple[int, float, str]], owner: int) -> str:
+    """Ответ на /who: кто подписан на рассылку.
+
+    Имя есть не у всех: у подписавшихся до того, как бот начал его запоминать,
+    оно появится при следующем /start.
+    """
+    if not rows:
+        return "Подписчиков пока нет. Ты получаешь скидки как владелец."
+    out = [f"<b>Подписчиков: {len(rows)}</b>"]
+    for chat_id, ts, name in rows:
+        when = time.strftime("%d.%m в %H:%M", time.localtime(ts))
+        who = html.escape(name, quote=False) if name else "имя неизвестно"
+        mine = " — это ты" if chat_id == owner else ""
+        out.append(f"• {who}{mine}\n  id <code>{chat_id}</code>, подписался {when}")
+    if owner and not any(r[0] == owner for r in rows):
+        out.append(f"\nПлюс ты сам (id <code>{owner}</code>) — владелец, в рассылке всегда.")
+    return "\n".join(out)
 
 
 START_TEXT = ("Показываю пару кроссовок с распродажи ({n} шт). Дальше буду присылать "

@@ -27,6 +27,7 @@
   приходят дубли или наоборот тишина          puma/checker.py + puma/storage.py
   как часто запускается, где секреты          .github/workflows/
   проверить без Telegram                      scripts/check-site.bat
+  посмотреть, кто подписан                    scripts/subscribers.bat
   залить изменения на GitHub                  scripts/publish.bat
 
 В каждом файле puma/ сверху написано, за что он отвечает и что в нём править.

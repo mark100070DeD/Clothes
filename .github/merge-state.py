@@ -19,6 +19,8 @@ db = sqlite3.connect(server)
 db.execute("CREATE TABLE IF NOT EXISTS seen (sku TEXT PRIMARY KEY, price INTEGER, ts REAL)")
 db.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
 db.execute("CREATE TABLE IF NOT EXISTS subs (chat_id INTEGER PRIMARY KEY, ts REAL)")
+if "name" not in {r[1] for r in db.execute("PRAGMA table_info(subs)")}:
+    db.execute("ALTER TABLE subs ADD COLUMN name TEXT")
 db.execute("ATTACH DATABASE ? AS mine", (mine,))
 
 before = db.execute("SELECT COUNT(*) FROM seen").fetchone()[0]
@@ -38,9 +40,10 @@ db.execute("""
 # Подписчики объединяются: человек, нажавший /start на одном прогоне, не должен
 # исчезнуть из-за другого прогона, который его ещё не видел.
 db.execute("""
-    INSERT INTO subs (chat_id, ts)
-    SELECT chat_id, ts FROM mine.subs WHERE true
-    ON CONFLICT(chat_id) DO NOTHING
+    INSERT INTO subs (chat_id, ts, name)
+    SELECT chat_id, ts, name FROM mine.subs WHERE true
+    ON CONFLICT(chat_id) DO UPDATE SET name = excluded.name
+    WHERE excluded.name <> '' AND excluded.name IS NOT NULL
 """)
 db.commit()
 
