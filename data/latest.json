@@ -1,5 +1,5 @@
 {
- "updated_at": "2026-09-22T18:49:17Z",
+ "updated_at": "2026-09-22T22:01:39Z",
  "count": 20,
  "items": [
   {
@@ -316,26 +316,6 @@
    ]
   },
   {
-   "sku": "403206_03",
-   "name": "Кросівки Mostro OG Prime Sneakers Unisex",
-   "url": "https://ua.puma.com/uk/mostro-og-prime-sneakers-unisex-403206-03.html",
-   "price": 2590,
-   "old_price": 6490,
-   "discount": 60,
-   "image": "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa/global/403206/03/sv01/fnd/UKR/w/1000/h/1000/fmt/png",
-   "color": "Lux Army-Glacial Gray (зелений)",
-   "sizes": [
-    "35.5",
-    "36",
-    "37",
-    "37.5",
-    "38",
-    "38.5",
-    "39",
-    "40"
-   ]
-  },
-  {
    "sku": "403206_09",
    "name": "Кросівки Mostro OG Prime Sneakers Unisex",
    "url": "https://ua.puma.com/uk/mostro-og-prime-sneakers-unisex-403206-09.html",
@@ -381,6 +361,54 @@
     "43",
     "45",
     "46"
+   ]
+  },
+  {
+   "sku": "403206_03",
+   "name": "Кросівки Mostro OG Prime Sneakers Unisex",
+   "url": "https://ua.puma.com/uk/mostro-og-prime-sneakers-unisex-403206-03.html",
+   "price": 2590,
+   "old_price": 6490,
+   "discount": 60,
+   "image": "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa/global/403206/03/sv01/fnd/UKR/w/1000/h/1000/fmt/png",
+   "color": "Lux Army-Glacial Gray (зелений)",
+   "sizes": [
+    "35.5",
+    "36",
+    "37",
+    "37.5",
+    "38",
+    "38.5",
+    "39",
+    "40"
+   ]
+  },
+  {
+   "sku": "403692_01",
+   "name": "Кросівки H-Street OG Sneakers Unisex",
+   "url": "https://ua.puma.com/uk/h-street-og-sneakers-unisex-403692-01.html",
+   "price": 2490,
+   "old_price": 4990,
+   "discount": 50,
+   "image": "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa/global/403692/01/sv01/fnd/UKR/w/1000/h/1000/fmt/png",
+   "color": "Fizzy Green-PUMA Silver (зелений)",
+   "sizes": [
+    "35.5",
+    "36",
+    "37",
+    "37.5",
+    "38",
+    "38.5",
+    "39",
+    "40",
+    "40.5",
+    "41",
+    "42",
+    "42.5",
+    "43",
+    "44",
+    "44.5",
+    "45"
    ]
   },
   {
@@ -432,34 +460,6 @@
     "45",
     "46",
     "47"
-   ]
-  },
-  {
-   "sku": "403692_01",
-   "name": "Кросівки H-Street OG Sneakers Unisex",
-   "url": "https://ua.puma.com/uk/h-street-og-sneakers-unisex-403692-01.html",
-   "price": 2490,
-   "old_price": 4990,
-   "discount": 50,
-   "image": "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa/global/403692/01/sv01/fnd/UKR/w/1000/h/1000/fmt/png",
-   "color": "Fizzy Green-PUMA Silver (зелений)",
-   "sizes": [
-    "35.5",
-    "36",
-    "37",
-    "37.5",
-    "38",
-    "38.5",
-    "39",
-    "40",
-    "40.5",
-    "41",
-    "42",
-    "42.5",
-    "43",
-    "44",
-    "44.5",
-    "45"
    ]
   },
   {
