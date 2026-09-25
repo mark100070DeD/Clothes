@@ -7,7 +7,8 @@
  *
  * Расписание внутри пятиминутки (minute % 5):
  *   0,1,2,3 — окно свежести: по LISTING_PAGES живых страниц списка Пумы.
- *             24 страницы -> полный круг за 15 минут.
+ *             28 страниц -> полный круг за 18 минут. Длину разделов бот
+ *             выясняет сам и запоминает, зашитого числа тут нет.
  *   4       — индекс: по SWEEP_PAGES страниц каталога.
  *             6 страниц -> полный круг тоже за 15 минут.
  *
@@ -29,8 +30,6 @@ export const SALE_URLS = [
   "https://ua.puma.com/uk/skidki/muzhchiny/obuv.html",
   "https://ua.puma.com/uk/skidki/zhenschiny/obuv.html",
 ];
-/** Сколько страниц у каждого раздела. Замер 25.09.2026: минимум 12. */
-export const LISTING_PAGES = 12;
 const IMG =
   "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa" +
   "/global/{model}/{color}/sv01/fnd/UKR/w/1000/h/1000/fmt/png";
@@ -149,12 +148,12 @@ async function sweepIndex(env, meta, cursor, pages, fetchFn) {
  * 15 минут.
  */
 async function sweepListing(env, meta, cursor, pages, fetchFn) {
-  const span = SALE_URLS.length * LISTING_PAGES;
+  const lengths = meta.sectionPages ?? {};
   const found = [];
+
   for (let i = 0; i < pages; i++) {
-    const index = Number(cursor.listing ?? 0) % span;
-    const section = Math.floor(index / LISTING_PAGES);
-    const page = (index % LISTING_PAGES) + 1;
+    const section = Number(cursor.section ?? 0) % SALE_URLS.length;
+    const page = Math.max(1, Number(cursor.page ?? 1));
     const url = `${SALE_URLS[section]}?p=${page}`;
 
     // Пауза перед второй страницей: две подряд без задержки — маленькая, но
@@ -162,12 +161,42 @@ async function sweepListing(env, meta, cursor, pages, fetchFn) {
     if (i) await new Promise((r) => setTimeout(r, 400 + Math.random() * 600));
 
     const html = await puma.fetchPuma(url, fetchFn, SALE_URLS[section]);
-    cursor.listing = (index + 1) % span;
+
+    // Пустая страница = раздел кончился. Запоминаем его длину и идём в
+    // следующий. Раньше длина была зашита числом 12, и это стоило дорого:
+    // замер 25.09.2026 показал 13 страниц в мужском разделе и 15 в женском,
+    // то есть 109 товаров окно свежести не видело вовсе. Теперь длина
+    // выясняется сама и переживает любые изменения распродажи.
+    if (!puma.hasProducts(html)) {
+      lengths[section] = Math.max(1, page - 1);
+      console.log(`окно свежести: ${url} пуста — в разделе ${lengths[section]} стр.`);
+      nextSection(cursor, section);
+      continue;
+    }
+
     const items = [...puma.parseListing(html).values()];
     console.log(`окно свежести: ${url} -> кроссовок со скидкой ${items.length}`);
     found.push(...items);
+
+    // Длину знаем — на пустую страницу больше не тратимся.
+    if (lengths[section] && page >= lengths[section]) {
+      nextSection(cursor, section);
+    } else {
+      // Раздел пишем явно: на первом тике его в курсоре ещё нет, и без этой
+      // строки он так и оставался бы неопределённым.
+      cursor.section = section;
+      cursor.page = page + 1;
+    }
   }
+
+  meta.sectionPages = lengths;
   return found;
+}
+
+/** Перейти к началу следующего раздела. */
+function nextSection(cursor, section) {
+  cursor.section = (section + 1) % SALE_URLS.length;
+  cursor.page = 1;
 }
 
 /**

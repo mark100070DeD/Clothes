@@ -170,7 +170,9 @@ test("за тик берутся две живые страницы, курсо�
     const target = String(url);
     if (target.includes("skidki")) asked.push(target);
     if (target.includes("api.telegram.org")) return jsonResponse({ ok: true, result: {} });
-    return textResponse("<html></html>");
+    // Товары на странице есть, кроссовок со скидкой нет — этого достаточно:
+    // проверяем ход курсора, а не отбор.
+    return textResponse('<li data-product-sku="1_1" data-product-item="9">x</li>');
   };
   // Без LISTING_PAGES в окружении — значит берётся значение по умолчанию.
   const env = { SUBS: kv, BOT_TOKEN: "1:x", CHAT_ID: "42" };
@@ -179,7 +181,39 @@ test("за тик берутся две живые страницы, курсо�
   assert.equal(asked.length, 2, "две страницы за тик");
   assert.match(asked[0], /muzhchiny\/obuv\.html\?p=1/);
   assert.match(asked[1], /muzhchiny\/obuv\.html\?p=2/);
-  assert.equal(JSON.parse(kv.store.get("state:cursor")).listing, 2, "курсор сдвинут на две");
+  const cursor = JSON.parse(kv.store.get("state:cursor"));
+  assert.equal(cursor.section, 0);
+  assert.equal(cursor.page, 3, "курсор стоит на третьей странице");
+});
+
+test("пустая страница = конец раздела, длина запоминается", async () => {
+  // Раньше длина раздела была зашита числом 12. Замер 25.09.2026: в мужском
+  // разделе 13 страниц, в женском 15 — то есть 109 товаров окно свежести не
+  // видело вовсе. Теперь бот выясняет длину сам и переживает её изменения.
+  const asked = [];
+  const kv = fakeKv({
+    "state:meta": READY_META,
+    "state:seen": JSON.stringify({ x: 1 }),
+    "state:cursor": JSON.stringify({ section: 0, page: 13 }),
+  });
+  const fetchFn = async (url) => {
+    const target = String(url);
+    if (target.includes("skidki")) {
+      asked.push(target);
+      // Тринадцатая пустая — значит в разделе 12 страниц.
+      return textResponse(target.includes("p=13")
+        ? "<html>ничего не найдено</html>"
+        : '<li data-product-sku="1_1" data-product-item="9">x</li>');
+    }
+    return jsonResponse({ ok: true, result: {} });
+  };
+  await run({ SUBS: kv, BOT_TOKEN: "1:x", CHAT_ID: "42", LISTING_PAGES: "1" }, 0, fetchFn);
+
+  const meta = JSON.parse(kv.store.get("state:meta"));
+  assert.equal(meta.sectionPages["0"], 12, "длина раздела выяснена и запомнена");
+  const cursor = JSON.parse(kv.store.get("state:cursor"));
+  assert.equal(cursor.section, 1, "перешли в следующий раздел");
+  assert.equal(cursor.page, 1, "с его первой страницы");
 });
 
 test("адрес индекса достаётся из HTML страницы", () => {
