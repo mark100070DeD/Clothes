@@ -147,8 +147,12 @@ async def run_audit():
             try:
                 state = await audit.fetch_worker_state(config.WORKER_URL, config.SUBS_TOKEN)
                 audit.sync_seen(db, state.get("seen"))
+                # Ноль значит «Worker отвечает, но не обошёл каталог ни разу» —
+                # свежеразвёрнутый, с вычищенным KV или со сломанным кроном.
+                # Считать это нормой нельзя: снаружи такой бот выглядит живым,
+                # а скидок не присылает. Замечено на боевом прогоне 25.09.2026.
                 last = float(state.get("last_sweep_ts") or 0)
-                silence = max(0.0, (time.time() - last) / 3600) if last else None
+                silence = (time.time() - last) / 3600 if last else float("inf")
             except Exception:
                 log.exception("состояние Worker получить не вышло")
                 silence = float("inf")   # не ответил — считаем молчащим

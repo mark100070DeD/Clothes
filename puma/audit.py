@@ -84,6 +84,11 @@ def verdict(report: dict) -> str | None:
 
 
 def stale_text(hours: float) -> str:
+    """Текст тревоги. Бесконечность значит «не обошёл каталог ни разу»."""
+    if hours == float("inf"):
+        return ("Worker отвечает, но каталог не обходил ни разу: KV пуст или крон "
+                "не срабатывает. Скидки сейчас идут только суточным обходом.\n"
+                "Проверить: cd worker && npx wrangler tail")
     return (f"Быстрый путь молчит {hours:.1f} ч: Worker не обновлял состояние. "
             "Скидки сейчас идут только суточным обходом, с задержкой до суток.\n"
             "Проверить: cd worker && npx wrangler deploy --keep-vars")

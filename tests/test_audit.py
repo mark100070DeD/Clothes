@@ -108,6 +108,18 @@ def test_stale_text_tells_what_to_do():
     assert "9.5" in text and "wrangler" in text, text
 
 
+def test_never_swept_is_not_silence():
+    """Worker, ни разу не обошедший каталог, — это поломка, а не норма.
+
+    Замечено на боевом прогоне 25.09.2026: при last_sweep_ts = 0 сторож молчал,
+    потому что «времени нет — значит и судить не о чем». Снаружи такой бот
+    выглядит живым и при этом не присылает ничего.
+    """
+    text = audit.stale_text(float("inf"))
+    assert "ни разу" in text, text
+    assert "inf" not in text, "бесконечность нельзя показывать человеку"
+
+
 if __name__ == "__main__":
     test_agreement()
     test_small_lag_is_not_an_alarm()
@@ -117,4 +129,5 @@ if __name__ == "__main__":
     test_seen_sync_prevents_duplicate_blast()
     test_seen_sync_survives_empty()
     test_stale_text_tells_what_to_do()
+    test_never_swept_is_not_silence()
     print("audit OK")
