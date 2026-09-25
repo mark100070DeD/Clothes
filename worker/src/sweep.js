@@ -111,7 +111,7 @@ async function sweepIndex(env, meta, cursor, pages, fetchFn) {
     const page = (Number(cursor.klevu ?? 0) + i) % klevu.pageCount(total);
     const result = await klevu.fetchPage(url, apiKey, page * klevu.PAGE_LIMIT, fetchFn);
     total = result.total || total;
-    const found = klevu.toItems(result.records);
+    const found = klevu.toItems(result.records).map((it) => ({ ...it, source: "индекс" }));
     const hash = state.snapshotHash(found);
     if (hashes[page] !== hash) {
       hashes[page] = hash;
@@ -174,7 +174,8 @@ async function sweepListing(env, meta, cursor, pages, fetchFn) {
       continue;
     }
 
-    const items = [...puma.parseListing(html).values()];
+    const items = [...puma.parseListing(html).values()]
+      .map((it) => ({ ...it, source: "живая страница" }));
     console.log(`окно свежести: ${url} -> кроссовок со скидкой ${items.length}`);
     found.push(...items);
 
@@ -256,7 +257,13 @@ async function confirmAndSend(env, item, seen, chatIds, minDiscount, fetchFn, fo
   card.reason = reason;
   card.delivered = delivered;
   card.of = chatIds.length;
-  console.log(`${item.sku}: отправлено ${delivered} из ${chatIds.length} — ${reason}`);
+  // Кто нашёл и что бот помнил до этого. По этим двум полям видно, настоящая
+  // это свежая уценка (нашла живая страница) или индекс догоняет то, что уже
+  // давно на сайте. Без них отличить одно от другого нечем.
+  card.source = item.source ?? "—";
+  card.was = was ?? null;
+  console.log(`${item.sku}: отправлено ${delivered} из ${chatIds.length}`
+    + ` — ${reason}, нашёл: ${card.source}`);
   seen[item.sku] = price;
   return card;
 }

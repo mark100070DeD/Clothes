@@ -241,6 +241,8 @@ async function status(env) {
         price: card.price,
         old_price: card.old_price,
         reason: card.reason ?? "—",
+        source: card.source ?? "—",
+        was: card.was ?? null,
         delivered: card.delivered ?? null,
         of: card.of ?? null,
         ts: card.ts ?? 0,
