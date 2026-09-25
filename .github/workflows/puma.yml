@@ -56,6 +56,17 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # Сами значения не печатаем — только факт, что секрет не пуст. Без этого
+      # забытый секрет выглядит так же, как сломанный: в обоих случаях сверка
+      # просто не может прочитать состояние Worker'а.
+      - name: Проверить, что секреты на месте
+        env:
+          WORKER_URL: ${{ secrets.WORKER_URL }}
+          SUBS_TOKEN: ${{ secrets.SUBS_TOKEN }}
+        run: |
+          echo "WORKER_URL задан: ${WORKER_URL:+да}${WORKER_URL:-НЕТ}"
+          echo "SUBS_TOKEN задан: ${SUBS_TOKEN:+да}${SUBS_TOKEN:-НЕТ}"
+
       - name: Сверить индекс с сайтом
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}

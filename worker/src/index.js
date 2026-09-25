@@ -103,12 +103,26 @@ export function pickItems(items, count, offset) {
   return out;
 }
 
-/** Общая проверка пароля для служебных адресов. */
+/**
+ * Общая проверка пароля для служебных адресов.
+ *
+ * Исход пишем в лог. Иначе разъехавшийся SUBS_TOKEN выглядит точно так же, как
+ * «суточная сверка почему-то не приходила»: снаружи 403 не отличить от того,
+ * что никто и не стучался. В логе это видно сразу, а значений здесь нет —
+ * только сам факт и причина отказа.
+ */
 async function guarded(request, env, handler) {
+  const path = new URL(request.url).pathname;
   const token = request.headers.get("X-Subs-Token");
-  if (!env.SUBS_TOKEN || token !== env.SUBS_TOKEN) {
+  if (!env.SUBS_TOKEN) {
+    console.log(`${path}: отказ — SUBS_TOKEN не задан в настройках Worker`);
     return new Response("forbidden", { status: 403 });
   }
+  if (token !== env.SUBS_TOKEN) {
+    console.log(`${path}: отказ — токен ${token ? "не совпал" : "не прислан"}`);
+    return new Response("forbidden", { status: 403 });
+  }
+  console.log(`${path}: доступ разрешён`);
   if (!env.SUBS) return json({ ok: false, error: "нет хранилища SUBS" }, 500);
   return await handler();
 }
