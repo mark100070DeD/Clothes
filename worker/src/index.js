@@ -26,7 +26,7 @@ import { caption, greeting } from "./caption.js";
 import { isWanted } from "./klevu.js";
 import * as state from "./state.js";
 import { tick } from "./sweep.js";
-import { tg } from "./telegram.js";
+import { recipients, tg } from "./telegram.js";
 
 const REASON = "Сейчас на распродаже";
 
@@ -208,7 +208,17 @@ async function importSeen(request, env) {
   return json({ ok: true, added, total: Object.keys(seen).length });
 }
 
-/** Короткий статус для браузера. Секретов здесь нет. */
+/**
+ * Короткий статус для браузера. Секретов здесь нет.
+ *
+ * Отдаём и список последних отправок: что, когда и по какому поводу. Логи
+ * Cloudflare живут недолго и смотреть их можно только вживую, а вопрос «бот
+ * прислал карточку — это была настоящая находка или сбой?» возникает каждый
+ * раз. Здесь на него можно ответить, ничего не тайля.
+ *
+ * Личных данных тут нет: артикулы и цены и так открыты на сайте Пумы,
+ * подписчики отдаются числом, без идентификаторов.
+ */
 async function status(env) {
   try {
     const meta = await state.readMeta(env);
@@ -216,9 +226,23 @@ async function status(env) {
     return json({
       ok: true,
       last_sweep_ts: meta.lastSweepTs ?? 0,
+      last_change_ts: meta.lastChangeTs ?? 0,
       index_total: meta.indexTotal ?? 0,
+      seeding: Boolean(meta.seeding),
+      subscribers: (await recipients(env)).length,
       showcase: showcase.length,
       start_items: startItems(env),
+      last_sent: showcase.slice(0, 10).map((card) => ({
+        sku: card.sku,
+        name: card.name,
+        price: card.price,
+        old_price: card.old_price,
+        reason: card.reason ?? "—",
+        delivered: card.delivered ?? null,
+        of: card.of ?? null,
+        ts: card.ts ?? 0,
+        at: card.ts ? new Date(card.ts * 1000).toISOString() : "",
+      })),
     });
   } catch (e) {
     return json({ ok: false, error: String(e) }, 502);

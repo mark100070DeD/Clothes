@@ -264,6 +264,28 @@ test("цена берётся со страницы товара, а не из �
   assert.equal(seen["404843_01"], 1490, "запоминаем именно отправленную цену");
 });
 
+test("карточка уходит ВСЕМ: и владельцу, и подписчикам", async () => {
+  // Владелец задан через CHAT_ID (42), подписчик лежит в KV (777). Оба должны
+  // получить одну и ту же карточку. Раньше это нигде не проверялось, а вопрос
+  // «а всем ли дошло?» — первое, что спрашивают про рассылку.
+  const sent = [];
+  const kv = fakeKv({
+    "state:seen": JSON.stringify({ "404843_01": 2200 }),
+    "state:meta": READY_META,
+  });
+  await run(envWith(kv), 2, fakeFetch({ records: [indexRecord()], total: 1, sent }));
+
+  const cards = sent.filter((m) => m.caption);
+  const gotIt = cards.map((m) => m.chat_id).sort();
+  assert.deepEqual(gotIt, [42, 777], "карточку получили владелец и подписчик");
+
+  // Число получателей записано в самой карточке — оно видно в статусе Worker'а.
+  const showcase = JSON.parse(kv.store.get("state:showcase"));
+  assert.equal(showcase[0].delivered, 2);
+  assert.equal(showcase[0].of, 2);
+  assert.match(showcase[0].reason, /Цена упала/);
+});
+
 test("распроданный товар не запоминается — вернётся, когда размеры появятся", async () => {
   const sent = [];
   const kv = fakeKv({

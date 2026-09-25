@@ -191,10 +191,18 @@ async function confirmAndSend(env, item, seen, chatIds, minDiscount, fetchFn, fo
     image: imageUrl(item.sku),
   };
   const reason = forcedReason || (was === undefined ? REASON_NEW : `Цена упала (было ${was} ₴)`);
-  if (!(await broadcast(env, chatIds, card, reason))) {
+  const delivered = await broadcast(env, chatIds, card, reason);
+  if (!delivered) {
     console.log(`${item.sku}: не дошло ни до кого — вернусь позже`);
     return null;
   }
+  // Повод и число получателей кладём в саму карточку: она уходит в витрину, а
+  // оттуда — в статус Worker'а. Без этого на вопрос «почему бот это прислал и
+  // всем ли дошло?» можно ответить только живым логом, который уже утёк.
+  card.reason = reason;
+  card.delivered = delivered;
+  card.of = chatIds.length;
+  console.log(`${item.sku}: отправлено ${delivered} из ${chatIds.length} — ${reason}`);
   seen[item.sku] = price;
   return card;
 }
