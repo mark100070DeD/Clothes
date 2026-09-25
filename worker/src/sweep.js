@@ -42,6 +42,12 @@ const FROZEN_HOURS = 2;
 const ENDPOINT_TTL_SEC = 24 * 3600;
 /** После 403 не трогаем Пуму сутки. Долбить забаненным — худшее, что можно. */
 const BAN_PAUSE_SEC = 24 * 3600;
+/**
+ * Версия схемы состояния. Поднимать, когда прошлая версия могла оставить в KV
+ * испорченные данные: тогда наполнение запустится заново, молча.
+ *   1 -> 2  круги каталога считались неверно, память заполнялась на треть
+ */
+const SEED_VERSION = 2;
 
 const REASON_NEW = "Новая скидка";
 /** Подпись для первого показа и витрины: это не новость, а «вот что есть». */
@@ -92,8 +98,7 @@ async function sweepIndex(env, meta, cursor, pages, fetchFn) {
   let total = Number(meta.indexTotal ?? klevu.PAGE_LIMIT);
 
   for (let i = 0; i < pages; i++) {
-    const count = klevu.pageCount(total);
-    const page = (Number(cursor.klevu ?? 0) + i) % count;
+    const page = (Number(cursor.klevu ?? 0) + i) % klevu.pageCount(total);
     const result = await klevu.fetchPage(url, apiKey, page * klevu.PAGE_LIMIT, fetchFn);
     total = result.total || total;
     const found = klevu.toItems(result.records);
@@ -103,12 +108,22 @@ async function sweepIndex(env, meta, cursor, pages, fetchFn) {
       changed = true;
     }
     items.push(...found);
-    // Последняя страница каталога — значит круг замкнулся. Это считает
-    // первичное наполнение: пока круг не пройден, рассылать нельзя.
-    if (page === count - 1) meta.circles = Number(meta.circles ?? 0) + 1;
   }
 
-  cursor.klevu = (Number(cursor.klevu ?? 0) + pages) % klevu.pageCount(total);
+  // Круг замкнулся, когда увидены ВСЕ страницы каталога — считаем по реально
+  // прочитанным, а не по номеру страницы.
+  //
+  // Раньше здесь стояло `page === count - 1`, и на первом же тике это было
+  // верно: размер каталога ещё неизвестен, pageCount по умолчанию давал 1,
+  // то есть 0 === 0. Круг объявлялся пройденным после ОДНОЙ страницы из шести,
+  // первичное наполнение обрывалось на трети, и остальные две сотни товаров
+  // уходили в чат как «новые». Проверено на живом деплое 25.09.2026.
+  const count = klevu.pageCount(total);
+  if (Object.keys(hashes).length >= count) {
+    meta.circles = Number(meta.circles ?? 0) + 1;
+  }
+
+  cursor.klevu = (Number(cursor.klevu ?? 0) + pages) % count;
   meta.indexTotal = total;
   meta.pageHashes = hashes;
   if (changed) meta.lastChangeTs = Math.floor(Date.now() / 1000);
@@ -192,6 +207,7 @@ async function confirmAndSend(env, item, seen, chatIds, minDiscount, fetchFn, fo
  */
 export async function tick(env, now = new Date(), fetchFn = fetch) {
   const meta = await state.readMeta(env);
+  resetIfStale(meta);
   const nowSec = Math.floor(now.getTime() / 1000);
   const paused = nowSec < Number(meta.pumaPauseUntil ?? 0);
 
@@ -270,6 +286,27 @@ export async function tick(env, now = new Date(), fetchFn = fetch) {
   await state.writeMeta(env, meta);
 
   return { kind: step.kind, found: items.length, candidates: wanted.length, sent: sent.length };
+}
+
+/**
+ * Починка состояния, испорченного прошлой версией.
+ *
+ * Считать круги каталога бот раньше умел неправильно, и в KV осталась отметка
+ * «наполнение закончено» при памяти, заполненной на треть. Просто выложить
+ * исправленный код мало: отметка-то уже стоит, и остаток каталога снова уехал
+ * бы в чат как двести «новых» скидок.
+ *
+ * Поэтому — разовый сброс по версии схемы. Наполнение запускается заново и
+ * проходит молча, как и задумано.
+ */
+function resetIfStale(meta) {
+  if (Number(meta.seedVersion ?? 0) >= SEED_VERSION) return;
+  console.log("состояние от старой версии — запускаю наполнение заново");
+  meta.seedVersion = SEED_VERSION;
+  meta.seeding = true;
+  meta.circles = 0;
+  meta.pageHashes = {};
+  meta.firstShowDone = false;
 }
 
 /**

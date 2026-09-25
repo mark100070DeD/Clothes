@@ -101,6 +101,7 @@ const READY_META = JSON.stringify({
   endpointTs: Math.floor(Date.now() / 1000),
   circles: 1,
   firstShowDone: true,
+  seedVersion: 2,
 });
 
 /** То же, но первый показ ещё не состоялся — как сразу после переезда. */
@@ -109,6 +110,25 @@ const FRESH_META = JSON.stringify({
   apiKey: "klevu-158811194777911465",
   endpointTs: Math.floor(Date.now() / 1000),
   circles: 1,
+  seedVersion: 2,
+});
+
+/** Состояние, оставленное прошлой версией: seedVersion ещё нет. */
+const OLD_META = JSON.stringify({
+  endpoint: "https://eucs20.ksearchnet.com/cs/v2/search",
+  apiKey: "klevu-158811194777911465",
+  endpointTs: Math.floor(Date.now() / 1000),
+  circles: 1,
+  firstShowDone: true,
+});
+
+/** Адрес индекса известен, но каталог ещё ни разу не обойдён. */
+const SEEDING_META = JSON.stringify({
+  endpoint: "https://eucs20.ksearchnet.com/cs/v2/search",
+  apiKey: "klevu-158811194777911465",
+  endpointTs: Math.floor(Date.now() / 1000),
+  circles: 0,
+  seedVersion: 2,
 });
 
 /**
@@ -132,6 +152,19 @@ test("расписание тиков: две минуты живым стран
   assert.deepEqual(plan(1), { kind: "listing", pages: 1 });
   assert.deepEqual(plan(2, 2), { kind: "index", pages: 2 });
   assert.deepEqual(plan(14, 3), { kind: "index", pages: 3 });
+});
+
+test("адрес индекса достаётся из HTML страницы", () => {
+  // Этот путь не был покрыт, и в нём жил баг: регулярка с экранированным
+  // слешем распалась на деление, обход падал с «g is not defined» на каждом
+  // тике, а все 26 тестов при этом были зелёными — в них адрес брался из KV.
+  const html = String.raw`<script>var x = {"searchUrl":"https:\/\/eucs20.ksearchnet.com\/cloud-search\/n-search\/search?ticket=klevu-158811194777911465&paginationStartsFrom=0"};</script>`;
+  const found = klevu.parseEndpoint(html);
+  assert.equal(found.endpoint, "https://eucs20.ksearchnet.com/cs/v2/search",
+    "из страницы берём хост, но адрес собираем на v2");
+  assert.equal(found.apiKey, "klevu-158811194777911465");
+
+  assert.throws(() => klevu.parseEndpoint("<html>без ключа</html>"));
 });
 
 test("адрес фото собирается из артикула", () => {
@@ -263,6 +296,43 @@ test("после переезда бот сразу показывает кру�
   const meta = JSON.parse(kv.store.get("state:meta"));
   assert.equal(meta.firstShowDone, true, "показ разовый, второй раз не повторится");
   assert.ok(JSON.parse(kv.store.get("state:showcase")).length >= 1, "витрина наполнена");
+});
+
+test("наполнение не заканчивается, пока каталог не прочитан целиком", async () => {
+  // Баг с живого деплоя 25.09.2026. Размер каталога на первом тике неизвестен,
+  // по умолчанию считался одной страницей — и круг объявлялся пройденным после
+  // ОДНОЙ страницы из шести. Наполнение обрывалось на трети, а оставшиеся
+  // двести товаров уходили в чат как «новые». Тесты это пропустили, потому что
+  // в них total всегда был равен 1.
+  const sent = [];
+  const kv = fakeKv({ "state:meta": SEEDING_META });
+  const records = ["111111_01", "222222_02", "333333_03", "444444_04"]
+    .map((s) => indexRecord(s));
+  // total 5183 -> шесть страниц по 1000. Одного тика на круг не хватит.
+  const result = await run(envWith(kv), 2, fakeFetch({ records, total: 5183, sent }));
+
+  assert.equal(result.seeding, true, "после одной страницы наполнение не закончено");
+  const meta = JSON.parse(kv.store.get("state:meta"));
+  assert.equal(meta.seeding, true, "флаг наполнения должен остаться поднятым");
+  assert.equal(Number(meta.circles ?? 0), 0, "круг не пройден");
+  assert.equal(sent.some((m) => m.photo), false, "во время наполнения молчим");
+});
+
+test("состояние старой версии сбрасывается и наполняется заново", async () => {
+  // Выложить исправленный код мало: в KV осталась отметка «наполнение
+  // закончено» при памяти, заполненной на треть.
+  const sent = [];
+  const kv = fakeKv({
+    "state:seen": JSON.stringify({ "404843_01": 2200 }),
+    "state:meta": OLD_META,   // без seedVersion — то есть от старой версии
+  });
+  const result = await run(envWith(kv), 2,
+    fakeFetch({ records: [indexRecord()], total: 5183, sent }));
+
+  assert.equal(result.seeding, true, "испорченное состояние уходит в наполнение");
+  const meta = JSON.parse(kv.store.get("state:meta"));
+  assert.equal(meta.seedVersion, 2);
+  assert.equal(sent.some((m) => m.photo), false, "и делает это молча");
 });
 
 test("отпечаток каталога меняется вместе с ценой", () => {

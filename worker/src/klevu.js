@@ -47,7 +47,11 @@ export function isSneakers(name) {
 
 /** Адрес и ключ индекса из HTML страницы. Не хардкодим: поменяют — подхватим. */
 export function parseEndpoint(html) {
-  const text = String(html ?? "").replace(/\\//g, "/");
+  // split/join, а не регулярка: в адресе внутри HTML слеши экранированы для JS
+  // (`https:\/\/...`), и запись этого через regexp требует четырёх обратных
+  // слешей подряд. Одного не хватило — литерал распался на деление, и обход
+  // падал с «g is not defined» на каждом тике. Здесь экранировать нечего.
+  const text = String(html ?? "").split("\\/").join("/");
   const host = HOST_RE.exec(text);
   const ticket = TICKET_RE.exec(text);
   if (!host || !ticket) throw new Error("в странице не нашёлся адрес или ключ индекса");
