@@ -147,6 +147,21 @@ export function parseListing(html) {
     while ((p = re.exec(html)) !== null) target.set(p[1], Math.round(Number(p[2])));
   }
 
+  // Адреса товаров — ОДНИМ проходом в таблицу sku -> адрес.
+  //
+  // Раньше здесь для каждой карточки компилировалась своя регулярка и заново
+  // сканировался весь мегабайт страницы. На двух десятках карточек это два
+  // десятка полных проходов — из-за них разбор страницы стоил 5 мс из 10,
+  // отпущенных Cloudflare на вызов, и не давал брать больше одной страницы
+  // за тик. Теперь проход один, и упирается всё уже не в это.
+  const links = new Map();
+  const href = /href="(https:\/\/ua\.puma\.com\/uk\/[^"]*?-(\d{6})-(\d{2})\.html)"/g;
+  let h;
+  while ((h = href.exec(html)) !== null) {
+    const sku = `${h[2]}_${h[3]}`;
+    if (!links.has(sku)) links.set(sku, h[1]);
+  }
+
   const out = new Map();
   for (const [id, card] of byId) {
     // Тот же фильтр, что в klevu.js и scraper.py: бутсы, сандалии, щитки и
@@ -155,13 +170,10 @@ export function parseListing(html) {
     const now = price.get(id);
     const was = oldPrice.get(id);
     if (!now || !was || now >= was) continue;
-    const link = new RegExp(
-      `href="(https://ua[.]puma[.]com/uk/[^"]*-${card.sku.replace("_", "-")}[.]html)"`,
-    ).exec(html);
     out.set(card.sku, {
       sku: card.sku,
       name: card.name,
-      url: link ? link[1] : "",
+      url: links.get(card.sku) ?? "",
       price: now,
       oldPrice: was,
     });

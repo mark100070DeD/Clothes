@@ -90,6 +90,7 @@ const envWith = (kv) => ({
   BOT_TOKEN: "1:x",
   CHAT_ID: "42",
   SWEEP_PAGES: "1",
+  LISTING_PAGES: "1",
 });
 
 const atMinute = (m) => new Date(Date.UTC(2026, 8, 25, 12, m, 0));
@@ -147,11 +148,38 @@ async function run(env, minute, fetchFn) {
   }
 }
 
-test("расписание тиков: две минуты живым страницам, три индексу", () => {
-  assert.deepEqual(plan(0), { kind: "listing", pages: 1 });
-  assert.deepEqual(plan(1), { kind: "listing", pages: 1 });
-  assert.deepEqual(plan(2, 2), { kind: "index", pages: 2 });
-  assert.deepEqual(plan(14, 3), { kind: "index", pages: 3 });
+test("расписание тиков: четыре минуты живым страницам, пятая индексу", () => {
+  // Скорость даёт окно живых страниц, а не индекс: замер 25.09.2026 показал,
+  // что шесть найденных скидок индекс не знал и через 40 минут. Поэтому четыре
+  // тика из пяти уходят на страницы — 24 страницы по две за тик, круг 15 минут.
+  for (const m of [0, 1, 2, 3]) {
+    assert.deepEqual(plan(m), { kind: "listing", pages: 2 }, `минута ${m}`);
+  }
+  assert.deepEqual(plan(4, 2), { kind: "index", pages: 2 });
+  assert.deepEqual(plan(9, 3), { kind: "index", pages: 3 });
+  assert.deepEqual(plan(0, 2, 1), { kind: "listing", pages: 1 }, "ручка LISTING_PAGES");
+});
+
+test("за тик берутся две живые страницы, курсор идёт дальше", async () => {
+  // Круг по 24 страницам и есть вся скорость бота. По одной странице за тик он
+  // занимал час; по две — пятнадцать минут. Стало возможно после того, как
+  // разбор страницы подешевел с 5 мс до 1 мс и перестал упираться в лимит CPU.
+  const asked = [];
+  const kv = fakeKv({ "state:meta": READY_META, "state:seen": JSON.stringify({ x: 1 }) });
+  const fetchFn = async (url, init) => {
+    const target = String(url);
+    if (target.includes("skidki")) asked.push(target);
+    if (target.includes("api.telegram.org")) return jsonResponse({ ok: true, result: {} });
+    return textResponse("<html></html>");
+  };
+  // Без LISTING_PAGES в окружении — значит берётся значение по умолчанию.
+  const env = { SUBS: kv, BOT_TOKEN: "1:x", CHAT_ID: "42" };
+  await run(env, 0, fetchFn);
+
+  assert.equal(asked.length, 2, "две страницы за тик");
+  assert.match(asked[0], /muzhchiny\/obuv\.html\?p=1/);
+  assert.match(asked[1], /muzhchiny\/obuv\.html\?p=2/);
+  assert.equal(JSON.parse(kv.store.get("state:cursor")).listing, 2, "курсор сдвинут на две");
 });
 
 test("адрес индекса достаётся из HTML страницы", () => {
@@ -239,7 +267,7 @@ test("первый запуск запоминает молча, карточе�
   const kv = fakeKv({ "state:meta": READY_META });
   const records = ["111111_01", "222222_02", "333333_03", "444444_04"]
     .map((s) => indexRecord(s));
-  await run(envWith(kv), 2, fakeFetch({ records, total: 1, sent }));
+  await run(envWith(kv), 4, fakeFetch({ records, total: 1, sent }));
 
   const seen = JSON.parse(kv.store.get("state:seen"));
   assert.equal(Object.keys(seen).length, 4, "все цены запомнены");
@@ -253,7 +281,7 @@ test("цена берётся со страницы товара, а не из �
     "state:seen": JSON.stringify({ "404843_01": 2200 }),
     "state:meta": READY_META,
   });
-  await run(envWith(kv), 2, fakeFetch({ records: [indexRecord()], total: 1, sent }));
+  await run(envWith(kv), 4, fakeFetch({ records: [indexRecord()], total: 1, sent }));
 
   const card = sent.find((m) => m.caption);
   assert.ok(card, "карточка должна уйти");
@@ -273,7 +301,7 @@ test("карточка уходит ВСЕМ: и владельцу, и подп
     "state:seen": JSON.stringify({ "404843_01": 2200 }),
     "state:meta": READY_META,
   });
-  await run(envWith(kv), 2, fakeFetch({ records: [indexRecord()], total: 1, sent }));
+  await run(envWith(kv), 4, fakeFetch({ records: [indexRecord()], total: 1, sent }));
 
   const cards = sent.filter((m) => m.caption);
   const gotIt = cards.map((m) => m.chat_id).sort();
@@ -292,7 +320,7 @@ test("распроданный товар не запоминается — ве
     "state:seen": JSON.stringify({ "404843_01": 2200 }),
     "state:meta": READY_META,
   });
-  await run(envWith(kv), 2,
+  await run(envWith(kv), 4,
     fakeFetch({ records: [indexRecord()], total: 1, product: SOLD_OUT_HTML, sent }));
 
   assert.equal(sent.some((m) => m.caption), false, "карточки нет");
@@ -307,7 +335,7 @@ test("на странице скидки уже нет — молчим, инд�
     "state:meta": READY_META,
   });
   const noDiscount = PRODUCT_HTML.replace('data-price-amount="1490"', 'data-price-amount="2990"');
-  await run(envWith(kv), 2,
+  await run(envWith(kv), 4,
     fakeFetch({ records: [indexRecord()], total: 1, product: noDiscount, sent }));
   assert.equal(sent.some((m) => m.caption), false, "ложную скидку не шлём");
 });
@@ -340,7 +368,7 @@ test("после переезда бот сразу показывает кру�
     "state:meta": FRESH_META,
   });
   const records = [indexRecord(), indexRecord("555555_05", "1000.00")];
-  const result = await run(envWith(kv), 2, fakeFetch({ records, total: 1, sent }));
+  const result = await run(envWith(kv), 4, fakeFetch({ records, total: 1, sent }));
 
   assert.equal(result.firstShow, true);
   const cards = sent.filter((m) => m.caption);
@@ -363,7 +391,7 @@ test("наполнение не заканчивается, пока катал�
   const records = ["111111_01", "222222_02", "333333_03", "444444_04"]
     .map((s) => indexRecord(s));
   // total 5183 -> шесть страниц по 1000. Одного тика на круг не хватит.
-  const result = await run(envWith(kv), 2, fakeFetch({ records, total: 5183, sent }));
+  const result = await run(envWith(kv), 4, fakeFetch({ records, total: 5183, sent }));
 
   assert.equal(result.seeding, true, "после одной страницы наполнение не закончено");
   const meta = JSON.parse(kv.store.get("state:meta"));
@@ -380,7 +408,7 @@ test("состояние старой версии сбрасывается и �
     "state:seen": JSON.stringify({ "404843_01": 2200 }),
     "state:meta": OLD_META,   // без seedVersion — то есть от старой версии
   });
-  const result = await run(envWith(kv), 2,
+  const result = await run(envWith(kv), 4,
     fakeFetch({ records: [indexRecord()], total: 5183, sent }));
 
   assert.equal(result.seeding, true, "испорченное состояние уходит в наполнение");

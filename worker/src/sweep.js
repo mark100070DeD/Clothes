@@ -6,15 +6,16 @@
  * вся сразу. Замеры разбора: страница индекса ~1.5-2 мс, страница списка ~5 мс.
  *
  * Расписание внутри пятиминутки (minute % 5):
- *   0, 1  — окно свежести: по одной живой странице списка Пумы.
- *           24 страницы -> полный круг за час.
- *   2,3,4 — индекс: по SWEEP_PAGES страниц каталога.
- *           6 страниц -> полный круг примерно за 5 минут.
+ *   0,1,2,3 — окно свежести: по LISTING_PAGES живых страниц списка Пумы.
+ *             24 страницы -> полный круг за 15 минут.
+ *   4       — индекс: по SWEEP_PAGES страниц каталога.
+ *             6 страниц -> полный круг тоже за 15 минут.
  *
  * Зачем два источника. Индекс полон (проверено: 591 из 591 товара распродажи),
- * но отстаёт на самых свежих уценках — замер 25.09.2026 показал расхождение на
- * 2 товарах из 89, и оба раза живой сайт был ДЕШЕВЛЕ. Живые страницы свежи, но
- * их 24 штуки по мегабайту. Вместе: индекс даёт полноту, страницы — скорость.
+ * но для свежих уценок бесполезен: 25.09.2026 бот нашёл шесть скидок, и все
+ * шесть индекс не знал даже через 40 минут. Живые страницы свежи всегда, но их
+ * 24 штуки по мегабайту. Поэтому скорость даёт окно, а индексу оставлена
+ * полнота — ему хватает круга раз в 15 минут.
  *
  * Главное правило: РЕШЕНИЕ ВСЕГДА ПО ЦЕНЕ СО СТРАНИЦЫ ТОВАРА. Индекс и список
  * только показывают, куда смотреть. Поэтому прислать неверную цену невозможно.
@@ -59,10 +60,20 @@ export function imageUrl(sku) {
   return IMG.replace("{model}", model).replace("{color}", color ?? "");
 }
 
-/** Что делать на этой минуте. Вынесено отдельно, чтобы проверять тестом. */
-export function plan(minute, sweepPages = 2) {
-  return minute % 5 < 2
-    ? { kind: "listing", pages: 1 }
+/**
+ * Что делать на этой минуте. Вынесено отдельно, чтобы проверять тестом.
+ *
+ * Четыре минуты из пяти уходят на живые страницы, пятая — на индекс. Так было
+ * не всегда: сначала соотношение было обратным, пока замер 25.09.2026 не
+ * показал, что индекс для свежих уценок бесполезен. Шесть скидок, найденных
+ * в тот день, он не знал и через 40 минут — все шесть нашло окно живых страниц.
+ *
+ * Отсюда и раскладка: скорость даёт окно, индексу остаётся полнота, и для неё
+ * хватает круга раз в 15 минут.
+ */
+export function plan(minute, sweepPages = 2, listingPages = 2) {
+  return minute % 5 < 4
+    ? { kind: "listing", pages: listingPages }
     : { kind: "index", pages: sweepPages };
 }
 
@@ -130,18 +141,32 @@ async function sweepIndex(env, meta, cursor, pages, fetchFn) {
   return items;
 }
 
-/** Одна живая страница списка. Курсор идёт по всем разделам подряд. */
-async function sweepListing(env, meta, cursor, fetchFn) {
+/**
+ * Живые страницы списка, начиная с курсора. Курсор идёт по разделам подряд.
+ *
+ * Это единственное место, которое даёт скорость: индекс про свежие уценки не
+ * знает. 24 страницы, по две за тик, четыре тика из пяти — полный круг за
+ * 15 минут.
+ */
+async function sweepListing(env, meta, cursor, pages, fetchFn) {
   const span = SALE_URLS.length * LISTING_PAGES;
-  const index = Number(cursor.listing ?? 0) % span;
-  const section = Math.floor(index / LISTING_PAGES);
-  const page = (index % LISTING_PAGES) + 1;
-  const url = `${SALE_URLS[section]}?p=${page}`;
+  const found = [];
+  for (let i = 0; i < pages; i++) {
+    const index = Number(cursor.listing ?? 0) % span;
+    const section = Math.floor(index / LISTING_PAGES);
+    const page = (index % LISTING_PAGES) + 1;
+    const url = `${SALE_URLS[section]}?p=${page}`;
 
-  const html = await puma.fetchPuma(url, fetchFn, SALE_URLS[section]);
-  cursor.listing = (index + 1) % span;
-  const found = [...puma.parseListing(html).values()];
-  console.log(`окно свежести: ${url} -> кроссовок со скидкой ${found.length}`);
+    // Пауза перед второй страницей: две подряд без задержки — маленькая, но
+    // очередь, а именно всплески и выглядят роботом. Разброс тоже нарочно.
+    if (i) await new Promise((r) => setTimeout(r, 400 + Math.random() * 600));
+
+    const html = await puma.fetchPuma(url, fetchFn, SALE_URLS[section]);
+    cursor.listing = (index + 1) % span;
+    const items = [...puma.parseListing(html).values()];
+    console.log(`окно свежести: ${url} -> кроссовок со скидкой ${items.length}`);
+    found.push(...items);
+  }
   return found;
 }
 
@@ -222,15 +247,16 @@ export async function tick(env, now = new Date(), fetchFn = fetch) {
   const cursor = await state.readCursor(env);
   const seen = await state.readSeen(env);
   const sweepPages = num(env.SWEEP_PAGES, 2);
+  const listingPages = num(env.LISTING_PAGES, 2);
   const minDiscount = num(env.MIN_DISCOUNT, 0) || 0;
-  const step = plan(now.getUTCMinutes(), sweepPages);
+  const step = plan(now.getUTCMinutes(), sweepPages, listingPages);
 
   let items = [];
   try {
     if (step.kind === "index") {
       items = await sweepIndex(env, meta, cursor, step.pages, fetchFn);
     } else if (!paused) {
-      items = await sweepListing(env, meta, cursor, fetchFn);
+      items = await sweepListing(env, meta, cursor, step.pages, fetchFn);
     } else {
       console.log("Пума на паузе — окно свежести пропускаю");
     }
