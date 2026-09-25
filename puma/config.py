@@ -34,17 +34,23 @@ ADMIN_ID = env_int("ADMIN_ID", 0)
 USERS_SHOWN = env_int("USERS_SHOWN", 10)
 # Сколько готовых карточек держать в витрине про запас.
 DEALS_KEEP = env_int("DEALS_KEEP", 50)
-# Выгрузка для Cloudflare Worker: он читает этот файл из репозитория
-# и отвечает по нему на /start мгновенно, не трогая ни сайт, ни базу.
-LATEST_PATH = os.getenv("LATEST_PATH") or "data/latest.json"
-LATEST_ITEMS = env_int("LATEST_ITEMS", 20)
-# Сколько первых страниц каждого раздела просмотреть в поисках кандидатов.
-LATEST_PAGES = env_int("LATEST_PAGES", 2)
-# Потолок на число открытых страниц товара. Размеры есть только там, а
-# ходить за ними по всем 450 товарам — это лишние минуты на каждый обход.
-LATEST_MAX_CHECKS = env_int("LATEST_MAX_CHECKS", 45)
 DB_PATH = os.getenv("DB_PATH") or "data/puma.db"
 CHAT_ID_PATH = "chat_id.txt"
+
+# --- Суточная сверка индекса с живым сайтом (audit.py) ---
+# Сколько первых страниц каждого раздела взять в выборку. Четыре страницы
+# (~140 товаров) отвечают на вопрос «индекс ещё свежий?» не хуже полного обхода
+# в 24 страницы, но стоят в шесть раз дешевле.
+AUDIT_PAGES = env_int("AUDIT_PAGES", 2)
+# Пороги тревоги, в процентах. Замер 25.09.2026: при здоровом индексе цены
+# разошлись на 2.2% — это его обычное отставание, а не поломка. Порог выше
+# замера, иначе тревога будет приходить каждый день и её перестанут читать.
+AUDIT_MISMATCH_PCT = env_int("AUDIT_MISMATCH_PCT", 10)
+AUDIT_MISSING_PCT = env_int("AUDIT_MISSING_PCT", 10)
+# Через сколько часов молчания Worker считать быстрый путь умершим. Круг
+# индекса — 3 минуты, так что шесть часов это 120 пропущенных кругов:
+# случайным сбоем столько не объяснить.
+STALE_HOURS = env_int("STALE_HOURS", 6)
 
 # Откуда забирать тех, кто нажал /start. На /start отвечает Worker, и новые
 # подписчики появляются у него, а не в базе: webhook занял канал getUpdates.
@@ -65,11 +71,20 @@ MAX_PAGES = 40
 # на чат, поэтому ровно 1.0 — по границе; 1.5 держит запас от ошибки 429.
 SEND_PAUSE_SEC = 1.5
 # Пауза между запросами к сайту, чтобы не долбить Пуму очередями.
+# JITTER — случайная добавка сверху: запросы строго через 500 мс это подпись
+# автомата, а разброс стоит ноль и убирает самый заметный признак.
 PAGE_PAUSE_SEC = 0.5
+PAGE_JITTER_SEC = 0.7
+# Настоящий Chrome шлёт весь этот набор. Один только User-Agent — заметная
+# аномалия для защиты от ботов: так ходят скрипты, а не браузеры.
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "uk-UA,uk;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
 }
 
 

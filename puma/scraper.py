@@ -8,9 +8,9 @@
   parse_listing   страница списка -> список Item (отбор: кроссовки + есть скидка)
   parse_product   страница товара -> размеры в наличии и цвет
   fetch_sale      обойти оба раздела по страницам (полный проход, раз в час)
-  fetch_pages     первые страницы разделов в порядке сайта (выгрузка latest.json)
+  fetch_pages     первые страницы разделов в порядке сайта (выборка для сверки)
 
-Кто ещё сюда ходит: export.py — за кандидатами для data/latest.json.
+Кто ещё сюда ходит: audit.py — за выборкой живых цен для суточной сверки.
 
 Опорные точки вёрстки, которые могут отвалиться:
   .product-item[data-product-sku]        карточка в списке
@@ -20,6 +20,7 @@
 """
 import asyncio
 import logging
+import random
 import re
 from urllib.parse import urljoin
 
@@ -30,6 +31,13 @@ from . import config
 from .models import Item
 
 log = logging.getLogger("puma")
+
+# Сколько раз повторить запрос, если Пума попросила подождать, и максимум
+# ожидания. Больше трёх попыток нет смысла: прогон всё равно суточный,
+# вернёмся завтра, а держать воркфлоу часами — только жечь минуты.
+RETRIES = 3
+RETRY_BASE_SEC = 5.0
+RETRY_MAX_SEC = 120.0
 
 
 def amount(el, price_type: str) -> int:
@@ -87,8 +95,52 @@ def parse_product(page_html: str) -> dict:
     return {"sizes": sizes, "color": color}
 
 
+class BannedError(RuntimeError):
+    """Сайт закрылся от бота (403). Обход надо прекратить, а не повторять."""
+
+
 def new_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(headers=config.HEADERS, timeout=30, follow_redirects=True)
+
+
+async def pause() -> None:
+    """Пауза между запросами со случайной добавкой.
+
+    Ровно 0.5 с между запросами — подпись автомата: живой человек так не ходит.
+    Разброс стоит ноль и убирает самый очевидный признак.
+    """
+    await asyncio.sleep(config.PAGE_PAUSE_SEC + random.random() * config.PAGE_JITTER_SEC)
+
+
+async def get(client: httpx.AsyncClient, url: str, **kw):
+    """GET с разбором отказов. Единственная дверь к Пуме в этом файле.
+
+    403  — бан. Поднимаем BannedError: продолжать долбить забаненным клиентом
+           хуже, чем остановиться. Наверху это превратится в тревогу владельцу.
+    429  — перегрузка. Ждём столько, сколько просят в Retry-After, и пробуем
+           ещё раз. Три попытки, потом сдаёмся до следующего прогона.
+    503  — то же самое: сайт жив, но сейчас не отвечает.
+    """
+    for attempt in range(RETRIES):
+        r = await client.get(url, **kw)
+        if r.status_code == 403:
+            raise BannedError(f"Puma ответила 403 на {url}")
+        if r.status_code in (429, 503):
+            wait = _retry_after(r) or RETRY_BASE_SEC * (attempt + 1)
+            log.warning("Puma ответила %d, жду %.0f с (попытка %d из %d)",
+                        r.status_code, wait, attempt + 1, RETRIES)
+            await asyncio.sleep(wait)
+            continue
+        r.raise_for_status()
+        return r
+    raise RuntimeError(f"Puma не ответила за {RETRIES} попыток: {url}")
+
+
+def _retry_after(response) -> float:
+    try:
+        return min(float(response.headers.get("Retry-After", "")), RETRY_MAX_SEC)
+    except ValueError:
+        return 0.0
 
 
 async def fetch_sale(client: httpx.AsyncClient) -> list[Item]:
@@ -102,8 +154,7 @@ async def fetch_sale(client: httpx.AsyncClient) -> list[Item]:
     for url in config.SALE_URLS:
         seen_skus: set[str] = set()
         for page in range(1, config.MAX_PAGES + 1):
-            r = await client.get(url, params={"p": page})
-            r.raise_for_status()
+            r = await get(client, url, params={"p": page})
             page_skus = set(re.findall(r'data-product-sku="([^"]+)"[^>]*data-product-item', r.text))
             if not page_skus - seen_skus:  # пусто или повтор последней страницы — конец
                 break
@@ -112,22 +163,21 @@ async def fetch_sale(client: httpx.AsyncClient) -> list[Item]:
                 found.setdefault(it.sku, it)
             log.info("%s p%d: всего кроссовок со скидкой %d",
                      url.rsplit("/", 2)[-2], page, len(found))
-            await asyncio.sleep(config.PAGE_PAUSE_SEC)
+            await pause()
     return list(found.values())
 
 
 async def fetch_pages(client: httpx.AsyncClient, pages: int = 1) -> list[Item]:
     """Первые `pages` страниц каждого раздела, в том порядке, как отдаёт сайт.
 
-    Нужна для выгрузки latest.json: там важен именно порядок витрины сайта, а не
-    размер скидки. Полный обход для этого слишком тяжёлый.
+    Нужна суточной сверке: чтобы проверить, не застрял ли поисковый индекс,
+    хватает выборки с первых страниц. Полный обход для этого слишком тяжёлый.
     """
     items: list[Item] = []
     seen: set[str] = set()
     for url in config.SALE_URLS:
         for page in range(1, pages + 1):
-            r = await client.get(url, params={"p": page})
-            r.raise_for_status()
+            r = await get(client, url, params={"p": page})
             found = parse_listing(r.text)
             new = [it for it in found if it.sku not in seen]
             if not new and page > 1:
@@ -135,5 +185,5 @@ async def fetch_pages(client: httpx.AsyncClient, pages: int = 1) -> list[Item]:
             for it in new:
                 seen.add(it.sku)
                 items.append(it)
-            await asyncio.sleep(config.PAGE_PAUSE_SEC)
+            await pause()
     return items

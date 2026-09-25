@@ -1,33 +1,46 @@
 """Точка входа. Здесь только запуск — весь код бота лежит в пакете puma/.
 
-    python bot.py           — живёт постоянно (слушает /start, проверяет раз в час)
-    python bot.py --once    — команды + обход сайта и выход (GitHub Actions)
-    python bot.py --answer  — только ответ на команды (GitHub Actions, быстрый)
+    python bot.py --audit   — суточная сверка (это крутится на GitHub)
+    python bot.py --once    — полный обход и рассылка: ЗАПАСНОЙ путь
+    python bot.py           — живёт постоянно (для запуска на своём компе)
+    python bot.py --answer  — только ответ на команды; при webhook бесполезен
 
-КАРТА ПРОЕКТА. Один прогон идёт сверху вниз:
+ГДЕ ТЕПЕРЬ ГЛАВНОЕ. Скидки ищет и рассылает Cloudflare Worker (папка worker/):
+крон будит его раз в минуту, задержка — несколько минут вместо часа. Код здесь
+остался для суточной сверки и на случай, если Worker замолчит.
 
+КАРТА ПРОЕКТА:
+
+    worker/src/sweep.js    БОЕВОЙ ПУТЬ: тик обхода, отбор, отправка
+         |                 klevu.js — индекс, puma.js — живые страницы,
+         |                 state.js — память в KV
+         |
     bot.py  ->  puma/app.py        выбирает режим, создаёт бота
                      |
-                puma/checker.py    ДИРИЖЁР: что новое, что подешевело
-                     |
-      +--------------+--------------+--------------+
-      |              |              |              |
-  scraper.py     storage.py     messages.py     sender.py
-  ходит на       помнит, что     тексты и        говорит с
-  сайт Пумы      уже послали     вид карточки    Telegram
-      |              |
-  (HTML сайта)   data/puma.db
+         +-----------+------------+
+         |                        |
+    puma/audit.py            puma/checker.py
+    сверка + сторож          ДИРИЖЁР запасного пути
+         |                        |
+    puma/klevu.py      +----------+----------+-----------+
+    индекс             |          |          |           |
+                   scraper.py storage.py messages.py sender.py
+                   ходит на   помнит,   тексты и    говорит с
+                   сайт Пумы  что послали вид карточки Telegram
+                       |          |
+                   (HTML сайта) data/puma.db
 
 Куда идти с проблемой:
 
-  не видит товары, пропали размеры или цвет   puma/scraper.py
-  не нравится текст или вид карточки          puma/messages.py
-  «что считать новостью» — правила отбора     puma/checker.py
+  бот молчит / не шлёт скидки                 worker/README.md, раздел «когда сломалось»
+  не видит товары, пропали размеры или цвет   worker/src/puma.js (бой), puma/scraper.py (запас)
+  не нравится текст или вид карточки          puma/messages.py + worker/src/caption.js
+  «что считать новостью» — правила отбора     worker/src/sweep.js + puma/checker.py
   адреса разделов, пороги, паузы              puma/config.py
   приходят дубли или наоборот тишина          puma/checker.py + puma/storage.py
-  /start отвечает «скидок пока нет»            puma/checker.py (refresh_deals)
+  /start отвечает «скидок пока нет»            витрина в KV пуста, см. worker/src/state.js
   кто получает /who                           puma/config.py (ADMIN_ID)
-  как часто запускается, где секреты          .github/workflows/
+  как часто запускается, где секреты          worker/wrangler.toml + .github/workflows/
   проверить без Telegram                      scripts/check-site.bat
   посмотреть, кто подписан                    scripts/subscribers.bat
   залить изменения на GitHub                  scripts/publish.bat
