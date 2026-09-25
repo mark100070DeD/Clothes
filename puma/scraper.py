@@ -5,7 +5,7 @@
 размеры или цвет — чинить надо ТОЛЬКО этот файл, остальные не знают про HTML.
 
 За что отвечает каждая функция:
-  parse_listing   страница списка -> список Item (отбор: кроссовки + есть скидка)
+  parse_listing   страница списка -> список Item (кроссовки, не детские, со скидкой)
   parse_product   страница товара -> размеры в наличии и цвет
   fetch_sale      обойти оба раздела по страницам (полный проход, раз в час)
   fetch_pages     первые страницы разделов в порядке сайта (выборка для сверки)
@@ -53,12 +53,35 @@ def is_sneakers(name: str) -> bool:
     return "кросівки" in n or "кеди" in n
 
 
+# Детское. Проверено на живом каталоге 25.09.2026: из 586 кроссовок со скидкой
+# 109 детских (toddler и infant по классификации Пумы), и это выражение ловит
+# все 109, не задев ни одного взрослого.
+#
+# Границы слова для латиницы обязательны: без них под фильтр попадала
+# коллаборация «PUMA x KIDSUPER» — взрослая обувь, в названии которой сидит
+# «kids». С \b «kidsuper» не совпадает, потому что дальше идёт буква.
+KIDS_RE = re.compile(r"дитяч|\b(kids?|babies|baby|toddler|infant|junior|jr)\b", re.I)
+
+
+def is_kids(name: str) -> bool:
+    return bool(KIDS_RE.search(name or ""))
+
+
+def is_wanted(name: str) -> bool:
+    """Берём ли мы этот товар вообще. Единственное место с этим правилом.
+
+    Его двойник на JS — isWanted в worker/src/klevu.js. Расходиться им нельзя:
+    суточная сверка сравнивает выборки обеих сторон и будет ругаться.
+    """
+    return is_sneakers(name) and not is_kids(name)
+
+
 def parse_listing(page_html: str) -> list[Item]:
     soup = BeautifulSoup(page_html, "html.parser")
     items = []
     for el in soup.select(".product-item[data-product-sku]"):
         name = el.get("data-product-name", "")
-        if not is_sneakers(name):
+        if not is_wanted(name):
             continue
         price = amount(el, "finalPrice")
         old = amount(el, "oldPrice")

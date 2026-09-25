@@ -47,8 +47,48 @@ def test_caption():
     assert "Размеры: 41, 42" in text
 
 
+def test_kids_are_skipped():
+    """Детскую обувь бот не присылает.
+
+    Замер на живом каталоге 25.09.2026: из 586 кроссовок со скидкой 109 детских.
+    Это правило обязано совпадать с isWanted в worker/src/klevu.js — там оно
+    проверяется теми же названиями.
+    """
+    kids = [
+        "Дитячі кеди Karmen II IDOL Sneakers Kids",
+        "Дитячі кросівки Anzarun Lite Kids’ Trainers",
+        "Дитячі кеди Shuffle V Babies' Trainers",
+        "Кросівки RS-X Kids Sneakers",          # слова «Дитячі» в названии нет
+    ]
+    for name in kids:
+        assert not scraper.is_wanted(name), name
+
+    # Бренд коллаборации содержит «kids», но обувь взрослая. Без границы слова
+    # фильтр выбрасывал её вместе с детской.
+    assert scraper.is_wanted("Кеди PUMA x KIDSUPER Brasil Panels Sneakers Unisex")
+    assert scraper.is_wanted("Кросівки Mostro OG Prime Sneakers Unisex")
+    assert not scraper.is_wanted("Сандалі Leadcat"), "не кроссовки — тоже мимо"
+
+
+def test_listing_skips_kids():
+    html = (
+        '<li class="product-item" data-product-sku="1_1" data-product-name="Дитячі кросівки Kids">'
+        '<a class="product-item__img-w" href="https://ua.puma.com/uk/a.html"></a>'
+        '<span data-price-type="finalPrice" data-price-amount="500"></span>'
+        '<span data-price-type="oldPrice" data-price-amount="1000"></span></li>'
+        '<li class="product-item" data-product-sku="2_2" data-product-name="Кросівки Mostro">'
+        '<a class="product-item__img-w" href="https://ua.puma.com/uk/b.html"></a>'
+        '<span data-price-type="finalPrice" data-price-amount="500"></span>'
+        '<span data-price-type="oldPrice" data-price-amount="1000"></span></li>'
+    )
+    items = scraper.parse_listing(html)
+    assert [i.sku for i in items] == ["2_2"], [i.sku for i in items]
+
+
 if __name__ == "__main__":
     test_listing()
     test_product()
     test_caption()
+    test_kids_are_skipped()
+    test_listing_skips_kids()
     print("parse OK")

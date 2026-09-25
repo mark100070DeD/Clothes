@@ -183,6 +183,38 @@ test("отбор в индексе совпадает с правилом бот
   assert.equal(klevu.toItem(indexRecord("111111_01", "2990.00")), null, "скидки нет");
 });
 
+test("детская обувь отсеивается, взрослая с «kids» в бренде — нет", () => {
+  // Имена настоящие, из каталога. Проверено на живых данных 25.09.2026:
+  // из 586 кроссовок со скидкой 109 детских, фильтр ловит все и не задевает
+  // ни одного взрослого. Правило обязано совпадать с KIDS_RE в scraper.py.
+  const kids = [
+    "Дитячі кеди Karmen II IDOL Sneakers Kids",
+    "Дитячі кросівки Anzarun Lite Kids’ Trainers",
+    "Дитячі кеди Shuffle V Babies' Trainers",
+    "Кросівки RS-X Kids Sneakers",           // «Дитячі» в названии нет
+  ];
+  for (const name of kids) {
+    assert.equal(klevu.isWanted(name), false, name);
+  }
+
+  const adults = [
+    "Кросівки Mostro OG Prime Sneakers Unisex",
+    // Бренд коллаборации содержит «kids» — но это взрослая обувь. Без границы
+    // слова фильтр выбрасывал её вместе с детской.
+    "Кеди PUMA x KIDSUPER Brasil Panels Sneakers Unisex",
+  ];
+  for (const name of adults) {
+    assert.equal(klevu.isWanted(name), true, name);
+  }
+
+  assert.equal(klevu.isWanted("Сандалі Leadcat"), false, "не кроссовки — тоже мимо");
+});
+
+test("детский товар не проходит отбор в индексе", () => {
+  const rec = { ...indexRecord(), name: "Дитячі кросівки Anzarun Lite Kids" };
+  assert.equal(klevu.toItem(rec), null);
+});
+
 test("страница товара отдаёт цену, размеры и цвет", () => {
   const info = puma.parseProduct(PRODUCT_HTML);
   assert.equal(info.price, 1490);

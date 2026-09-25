@@ -1,4 +1,4 @@
-import { isSneakers } from "./klevu.js";
+import { isWanted } from "./klevu.js";
 
 /**
  * Живой сайт Пумы: страница товара и страница списка.
@@ -122,8 +122,8 @@ export function parseProduct(html) {
 }
 
 /**
- * Страница списка -> Map(sku -> {name, url, price, oldPrice}), только кроссовки
- * со скидкой. Это «окно свежести»: цены здесь настоящие, в отличие от индекса.
+ * Страница списка -> Map(sku -> {name, url, price, oldPrice}), только взрослые
+ * кроссовки со скидкой. Это «окно свежести»: цены здесь настоящие, в отличие от индекса.
  *
  * Цена и артикул лежат в разных местах разметки, связывает их data-product-item:
  *   data-product-sku="403206_08" data-product-item="1601041"
@@ -149,9 +149,9 @@ export function parseListing(html) {
 
   const out = new Map();
   for (const [id, card] of byId) {
-    // Тот же фильтр, что в klevu.js и scraper.py: бутсы, сандалии и щитки тоже
-    // лежат в разделе распродажи обуви, но боту они не нужны.
-    if (!isSneakers(card.name)) continue;
+    // Тот же фильтр, что в klevu.js и scraper.py: бутсы, сандалии, щитки и
+    // детское тоже лежат в разделе распродажи обуви, но боту они не нужны.
+    if (!isWanted(card.name)) continue;
     const now = price.get(id);
     const was = oldPrice.get(id);
     if (!now || !was || now >= was) continue;

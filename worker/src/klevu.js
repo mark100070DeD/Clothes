@@ -45,6 +45,28 @@ export function isSneakers(name) {
   return n.includes("кросівки") || n.includes("кеди");
 }
 
+/**
+ * Детское. Двойник KIDS_RE из scraper.py, менять только вместе с ним.
+ *
+ * Проверено на живом каталоге 25.09.2026: из 586 кроссовок со скидкой 109
+ * детских (toddler и infant по классификации Пумы). Это выражение ловит все
+ * 109 и не задевает ни одного взрослого.
+ *
+ * Границы слова для латиницы обязательны: без них под фильтр попадала
+ * коллаборация «PUMA x KIDSUPER» — взрослая обувь со словом «kids» внутри
+ * названия бренда. С \b «kidsuper» не совпадает: дальше идёт буква.
+ */
+const KIDS_RE = /дитяч|\b(kids?|babies|baby|toddler|infant|junior|jr)\b/i;
+
+export function isKids(name) {
+  return KIDS_RE.test(String(name ?? ""));
+}
+
+/** Берём ли товар вообще. Единственное место с этим правилом на стороне JS. */
+export function isWanted(name) {
+  return isSneakers(name) && !isKids(name);
+}
+
 /** Адрес и ключ индекса из HTML страницы. Не хардкодим: поменяют — подхватим. */
 export function parseEndpoint(html) {
   // split/join, а не регулярка: в адресе внутри HTML слеши экранированы для JS
@@ -88,13 +110,14 @@ export function readPage(payload) {
 
 /**
  * Одна запись индекса -> товар или null.
- * Отбор тот же, что в parse_listing: кроссовки, есть скидка, есть в наличии.
+ * Отбор тот же, что в parse_listing: кроссовки, не детские, со скидкой,
+ * в наличии.
  */
 export function toItem(rec) {
   const sku = skuOf(rec?.url);
   if (!sku) return null;
   const name = rec.name ?? "";
-  if (!isSneakers(name)) return null;
+  if (!isWanted(name)) return null;
   if (!["yes", "true", "1"].includes(String(rec.inStock ?? "yes").toLowerCase())) return null;
   const price = money(rec.salePrice); // текущая
   const oldPrice = money(rec.price); // до скидки

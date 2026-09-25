@@ -23,6 +23,7 @@
  * после ответа и повторов не вызывает.
  */
 import { caption, greeting } from "./caption.js";
+import { isWanted } from "./klevu.js";
 import * as state from "./state.js";
 import { tick } from "./sweep.js";
 import { tg } from "./telegram.js";
@@ -250,7 +251,10 @@ async function handleStart(env, chat) {
   const chatId = chat.id;
   await remember(env, chat);
 
-  const showcase = await state.readShowcase(env);
+  // Фильтр здесь, а не только при записи: в витрине могли остаться карточки,
+  // собранные до того, как детская обувь стала отсеиваться. Ждать, пока они
+  // вытеснятся новыми, — значит показывать их человеку ещё несколько дней.
+  const showcase = (await state.readShowcase(env)).filter((card) => isWanted(card.name));
   const items = pickItems(
     showcase,
     startItems(env),

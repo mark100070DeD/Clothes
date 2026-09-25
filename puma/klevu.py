@@ -31,7 +31,7 @@ import re
 
 from . import config
 from .models import Item
-from .scraper import is_sneakers
+from .scraper import is_wanted
 
 log = logging.getLogger("puma")
 
@@ -116,14 +116,14 @@ def to_item(rec: dict) -> Item | None:
     """Одна запись индекса -> Item. None, если это не наш товар.
 
     Отбор здесь ровно тот же, что в scraper.parse_listing: кроссовки или кеды,
-    цена ниже старой. Плюс наличие — в списке Пумы распроданное не показывают,
-    а в индексе оно есть.
+    не детские, цена ниже старой. Плюс наличие — в списке Пумы распроданное не
+    показывают, а в индексе оно есть.
     """
     sku = sku_of(rec.get("url", ""))
     if not sku:
         return None
     name = rec.get("name") or ""
-    if not is_sneakers(name):
+    if not is_wanted(name):
         return None
     if str(rec.get("inStock", "yes")).lower() not in ("yes", "true", "1"):
         return None
