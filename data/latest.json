@@ -1,5 +1,5 @@
 {
- "updated_at": "2026-09-25T01:26:28Z",
+ "updated_at": "2026-09-25T07:42:55Z",
  "count": 20,
  "items": [
   {
@@ -364,26 +364,6 @@
    ]
   },
   {
-   "sku": "403206_03",
-   "name": "Кросівки Mostro OG Prime Sneakers Unisex",
-   "url": "https://ua.puma.com/uk/mostro-og-prime-sneakers-unisex-403206-03.html",
-   "price": 2590,
-   "old_price": 6490,
-   "discount": 60,
-   "image": "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa/global/403206/03/sv01/fnd/UKR/w/1000/h/1000/fmt/png",
-   "color": "Lux Army-Glacial Gray (зелений)",
-   "sizes": [
-    "35.5",
-    "36",
-    "37",
-    "37.5",
-    "38",
-    "38.5",
-    "39",
-    "40"
-   ]
-  },
-  {
    "sku": "406126_05",
    "name": "Кросівки H-Street Chrome Sneakers Unisex",
    "url": "https://ua.puma.com/uk/h-street-chrome-sneakers-unisex-406126-05.html",
@@ -463,14 +443,14 @@
    ]
   },
   {
-   "sku": "403206_30",
+   "sku": "403206_03",
    "name": "Кросівки Mostro OG Prime Sneakers Unisex",
-   "url": "https://ua.puma.com/uk/mostro-og-prime-sneakers-unisex-403206-30.html",
+   "url": "https://ua.puma.com/uk/mostro-og-prime-sneakers-unisex-403206-03.html",
    "price": 2590,
    "old_price": 6490,
    "discount": 60,
-   "image": "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa/global/403206/30/sv01/fnd/UKR/w/1000/h/1000/fmt/png",
-   "color": "Pearl Pink-Warm White (рожевий)",
+   "image": "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa/global/403206/03/sv01/fnd/UKR/w/1000/h/1000/fmt/png",
+   "color": "Lux Army-Glacial Gray (зелений)",
    "sizes": [
     "35.5",
     "36",
@@ -479,8 +459,7 @@
     "38",
     "38.5",
     "39",
-    "40",
-    "40.5"
+    "40"
    ]
   },
   {
@@ -504,6 +483,27 @@
     "41",
     "42",
     "43",
+    "44",
+    "44.5",
+    "45",
+    "46"
+   ]
+  },
+  {
+   "sku": "309455_02",
+   "name": "Кросівки McLAREN RACING Caven III Sneakers Unisex",
+   "url": "https://ua.puma.com/uk/mclaren-racing-caven-iii-sneakers-unisex-309455-02.html",
+   "price": 3499,
+   "old_price": 4190,
+   "discount": 16,
+   "image": "https://images.puma.com/image/upload/f_auto,q_auto,b_rgb:fafafa/global/309455/02/sv01/fnd/UKR/w/1000/h/1000/fmt/png",
+   "color": "Puma White (білий)",
+   "sizes": [
+    "35.5",
+    "36",
+    "37.5",
+    "40.5",
+    "42",
     "44",
     "44.5",
     "45",
