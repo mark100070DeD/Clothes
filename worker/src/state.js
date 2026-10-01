@@ -54,10 +54,29 @@ async function writeJson(env, key, value) {
 export const readSeen = (env) => readJson(env, SEEN_KEY, {});
 export const writeSeen = (env, seen) => writeJson(env, SEEN_KEY, seen);
 
-export const readCursor = (env) => readJson(env, CURSOR_KEY, { klevu: 0, listing: 0 });
-export const writeCursor = (env, cursor) => writeJson(env, CURSOR_KEY, cursor);
+/**
+ * Состояние обхода: meta вместе с курсором внутри.
+ *
+ * Раньше курсор лежал отдельным ключом, и каждый тик стоил 3 чтения и 2 записи.
+ * Замер 01.10.2026: сам тик тратит ~3.5 мс сверх чтения страниц, и обращения к
+ * KV — главная часть этих накладных при лимите 10 мс на вызов. Слияние убирает
+ * одно чтение и одну запись.
+ *
+ * Второй выигрыш важнее: записей стало 1 на тик вместо 2, то есть 1440 в сутки
+ * вместо 2880. Суточный лимит бесплатного тарифа — 1000, и 30.09 бот выбрал
+ * 2564. Это ещё не победа, но половина перерасхода ушла.
+ *
+ * Старый ключ читаем один раз при переходе — иначе бот забыл бы, где шёл, и
+ * начал бы круг заново.
+ */
+export async function readMeta(env) {
+  const meta = await readJson(env, META_KEY, {});
+  if (!meta.cursor) {
+    meta.cursor = await readJson(env, CURSOR_KEY, {});
+  }
+  return meta;
+}
 
-export const readMeta = (env) => readJson(env, META_KEY, {});
 export const writeMeta = (env, meta) => writeJson(env, META_KEY, meta);
 
 export const readShowcase = (env) => readJson(env, SHOWCASE_KEY, []);

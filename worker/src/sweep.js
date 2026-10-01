@@ -318,7 +318,8 @@ export async function tick(env, now = new Date(), fetchFn = fetch) {
   const nowSec = Math.floor(now.getTime() / 1000);
   const paused = nowSec < Number(meta.pumaPauseUntil ?? 0);
 
-  const cursor = await state.readCursor(env);
+  // Курсор живёт внутри meta: одно чтение вместо двух, одна запись вместо двух.
+  const cursor = meta.cursor;
   const seen = await state.readSeen(env);
   const sweepPages = num(env.SWEEP_PAGES, 2);
   const listingPages = num(env.LISTING_PAGES, 2);
@@ -346,7 +347,6 @@ export async function tick(env, now = new Date(), fetchFn = fetch) {
     for (const it of items) seen[it.sku] = it.price;
     meta.seeding = Number(meta.circles ?? 0) < 1;
     await state.writeSeen(env, seen);
-    await state.writeCursor(env, cursor);
     if (!meta.seeding) {
       await warnOnce(env, meta, "seeded",
         `Запомнил ${Object.keys(seen).length} кроссовок со скидкой. ` +
@@ -362,7 +362,6 @@ export async function tick(env, now = new Date(), fetchFn = fetch) {
   if (!meta.firstShowDone && items.length && !paused) {
     await firstShow(env, meta, items, seen, minDiscount, fetchFn);
     await state.writeSeen(env, seen);
-    await state.writeCursor(env, cursor);
     await state.writeMeta(env, meta);
     return { kind: step.kind, firstShow: true };
   }
@@ -389,9 +388,8 @@ export async function tick(env, now = new Date(), fetchFn = fetch) {
     await state.writeSeen(env, seen);
     await state.pushShowcase(env, sent);
   }
-  await state.writeCursor(env, cursor);
   await checkFrozen(env, meta, nowSec);
-  await state.writeMeta(env, meta);
+  await state.writeMeta(env, meta);   // вместе с курсором
 
   return { kind: step.kind, found: items.length, candidates: wanted.length, sent: sent.length };
 }
