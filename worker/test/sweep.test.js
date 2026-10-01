@@ -216,6 +216,54 @@ test("пустая страница = конец раздела, длина за
   assert.equal(cursor.page, 1, "с его первой страницы");
 });
 
+test("пустая ПЕРВАЯ страница не запирает раздел навсегда", async () => {
+  // Баг с живого бота 30.09-01.10.2026. Пума один раз отдала первую страницу
+  // без товаров, код записал длину раздела = max(1, 1-1) = 1, и дальше первой
+  // страницы бот не ходил уже никогда: узнать, что раздел длиннее, он мог бы
+  // только заглянув на вторую. Двое суток он видел 40 товаров из 420.
+  const kv = fakeKv({
+    "state:meta": READY_META,
+    "state:seen": JSON.stringify({ x: 1 }),
+    "state:cursor": JSON.stringify({ section: 0, page: 1 }),
+  });
+  const fetchFn = async (url) => {
+    if (String(url).includes("skidki")) return textResponse("<html>сбой сайта</html>");
+    return jsonResponse({ ok: true, result: {} });
+  };
+  await run({ SUBS: kv, BOT_TOKEN: "1:x", CHAT_ID: "42", LISTING_PAGES: "1" }, 0, fetchFn);
+
+  const meta = JSON.parse(kv.store.get("state:meta"));
+  assert.equal(meta.sectionPages?.["0"], undefined,
+    "по пустой первой странице длину запоминать нельзя — это сбой, а не раздел из одной страницы");
+});
+
+test("раздел обходится до конца, даже если раньше был записан короче", async () => {
+  // Второе следствие того же бага: испорченная длина должна перестать влиять.
+  // Обход идёт вперёд, пока страницы не кончатся, а не до запомненного числа.
+  const asked = [];
+  const kv = fakeKv({
+    // sectionPages испорчены ровно так, как было на живом боте.
+    "state:meta": JSON.stringify({ ...JSON.parse(READY_META), sectionPages: { 0: 1, 1: 1 } }),
+    "state:seen": JSON.stringify({ x: 1 }),
+    "state:cursor": JSON.stringify({ section: 0, page: 1 }),
+  });
+  const fetchFn = async (url) => {
+    const target = String(url);
+    if (target.includes("skidki")) {
+      asked.push(target);
+      return textResponse('<li data-product-sku="1_1" data-product-item="9">x</li>');
+    }
+    return jsonResponse({ ok: true, result: {} });
+  };
+  await run({ SUBS: kv, BOT_TOKEN: "1:x", CHAT_ID: "42" }, 0, fetchFn);
+
+  assert.match(asked[0], /muzhchiny\/obuv\.html\?p=1/);
+  assert.match(asked[1], /muzhchiny\/obuv\.html\?p=2/, "вторая страница того же раздела, а не прыжок");
+  const cursor = JSON.parse(kv.store.get("state:cursor"));
+  assert.equal(cursor.section, 0);
+  assert.equal(cursor.page, 3);
+});
+
 test("адрес индекса достаётся из HTML страницы", () => {
   // Этот путь не был покрыт, и в нём жил баг: регулярка с экранированным
   // слешем распалась на деление, обход падал с «g is not defined» на каждом
@@ -388,7 +436,11 @@ test("403 останавливает обход на сутки и пишет в
 
   assert.equal(result.kind, "banned");
   const meta = JSON.parse(kv.store.get("state:meta"));
-  assert.ok(meta.pumaPauseUntil > Date.now() / 1000 + 3600, "пауза не меньше часа");
+  // Сравниваем со временем ТИКА, а не с Date.now(): время тика в тестах
+  // зафиксировано датой, и привязка к «сейчас» ломала этот тест при смене
+  // суток — он позеленел бы обратно только если переписать дату в atMinute.
+  const tickSec = Math.floor(atMinute(0).getTime() / 1000);
+  assert.ok(meta.pumaPauseUntil > tickSec + 3600, "пауза не меньше часа");
   assert.equal(sent.some((m) => /403/.test(m.text ?? "")), true, "тревога ушла");
 });
 
