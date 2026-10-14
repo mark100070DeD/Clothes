@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Разбор ошибок</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <button id="back" class="ghost" hidden>← Отчёты</button>
+      <h1 id="heading">Кабинет разбора ошибок</h1>
+    </header>
+
+    <!-- Экран 1: кнопка и список отчётов -->
+    <section id="reports-view">
+      <button id="load" class="primary">Загрузить отчёт</button>
+      <p id="reports-status" class="status" role="status"></p>
+      <ul id="reports" class="reports"></ul>
+    </section>
+
+    <!-- Экран 2: чат по выбранному отчёту -->
+    <section id="chat-view" hidden>
+      <div class="chat-meta">
+        <span id="report-date" class="muted"></span>
+        <button id="restart" class="ghost">Начать разбор заново</button>
+      </div>
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <form id="composer" class="composer">
+        <textarea id="input" rows="2" placeholder="Ответы на упражнения или вопрос…" required></textarea>
+        <button id="send" class="primary" type="submit">Отправить</button>
+      </form>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

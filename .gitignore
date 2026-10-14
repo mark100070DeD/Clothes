@@ -5,3 +5,8 @@ logs/
 
 # Локальный кэш Wrangler: там id аккаунта Cloudflare, репозиторий публичный.
 worker/.wrangler/
+
+# Кабинет английского: зависимости, кэш Wrangler и локальные секреты.
+english/node_modules/
+english/.wrangler/
+english/.dev.vars

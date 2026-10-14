@@ -1,0 +1,14 @@
+{
+  "name": "english-errors-cabinet",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker: кабинет разбора английских ошибок из Notion с помощью Claude",
+  "scripts": {
+    "test": "node --test",
+    "deploy": "wrangler deploy --keep-vars",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0"
+  }
+}

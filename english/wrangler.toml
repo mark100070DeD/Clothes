@@ -1,0 +1,25 @@
+# Кабинет разбора английских ошибок.
+#
+# СЕКРЕТОВ ЗДЕСЬ НЕТ И БЫТЬ НЕ ДОЛЖНО: репозиторий публичный.
+# NOTION_TOKEN, NOTION_DATABASE_ID, ANTHROPIC_API_KEY и APP_PASSWORD задаются
+# в Cloudflare: wrangler secret put ИМЯ (или Settings -> Variables and Secrets).
+#
+# Деплой: cd english && npm install && npx wrangler deploy --keep-vars
+name = "english-errors-cabinet"
+main = "src/index.js"
+compatibility_date = "2026-09-20"
+workers_dev = true
+preview_urls = false
+
+# HTML, CSS и JS из public/ Cloudflare раздаёт сам, бесплатно и без вызова
+# Worker'а. Код запускается только на /api/*.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true

@@ -1,0 +1,8 @@
+# Для `npx wrangler dev`: скопируй в .dev.vars (он в .gitignore) и заполни.
+NOTION_TOKEN=ntn_...
+NOTION_DATABASE_ID=0123456789abcdef0123456789abcdef
+ANTHROPIC_API_KEY=sk-ant-...
+APP_PASSWORD=придумай-длинный-пароль
+# NOTION_DATE_PROPERTY=Дата
+# CLAUDE_MODEL=claude-opus-5-5
+# CLAUDE_EFFORT=medium
